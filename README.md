@@ -74,4 +74,6 @@ start.ps1       서버 기동 + 앱 창 (Windows)
 
 ## 라이선스
 
-MIT © 2026 Sunny Ryu
+© 2026 Sunny Ryu · All rights reserved.
+
+**MIT License** — 누구나 자유롭게 사용 · 수정 · 배포할 수 있습니다 (저작권 표시 유지).
