@@ -1,0 +1,14 @@
+{
+  "name": "ppt-maker",
+  "version": "1.0.0",
+  "description": "HTML 슬라이드 덱을 편집 가능한 PowerPoint(.pptx)로 변환. AI 없음 · 로컬 동작 · 폰트 임베드.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1",
+    "puppeteer-core": "^25.1.0"
+  },
+  "license": "MIT",
+  "author": "Birch Sound / SUNNY"
+}

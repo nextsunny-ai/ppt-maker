@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPT 메이커 · Birch Sound</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<div class="frame-corners"><span></span><span></span><span></span><span></span></div>
+
+<!-- top brand bar -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span class="brand-name">PPT&nbsp;MAKER</span>
+    <span class="brand-tag">[ HTML → PPTX ]</span>
+  </div>
+  <div class="topbar-right">
+    <span class="meta">birch sound · SUNNY</span>
+    <button class="icon-btn" id="themeBtn" title="테마 전환">◐</button>
+  </div>
+</header>
+
+<div class="shell">
+  <!-- left nav -->
+  <nav class="rail">
+    <button class="nav active" data-view="convert"><span class="nk">01</span><span class="nl">변환</span></button>
+    <button class="nav" data-view="fonts"><span class="nk">02</span><span class="nl">폰트</span></button>
+    <button class="nav" data-view="settings"><span class="nk">03</span><span class="nl">설정</span></button>
+    <button class="nav" data-view="about"><span class="nk">04</span><span class="nl">정보</span></button>
+    <div class="rail-foot">v1.0 · 로컬<br><span>AI 없음</span></div>
+  </nav>
+
+  <!-- main -->
+  <main class="work">
+
+    <!-- VIEW: convert -->
+    <section class="view active" data-view="convert">
+      <div class="vhead">
+        <div class="vtag">[ 001 · Convert ]</div>
+        <h1>슬라이드 HTML을 <em>편집 가능한</em> PPT로</h1>
+        <p class="lede">화면 그대로, 모든 글자가 PowerPoint에서 수정됩니다. 폰트는 파일에 임베드됩니다.</p>
+      </div>
+
+      <div class="panel drop" id="drop">
+        <svg class="drop-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <div class="drop-title">HTML 파일 선택</div>
+        <div class="drop-hint" id="dropHint">여기를 클릭해서 HTML 파일을 고르세요 · 여러 개 가능</div>
+      </div>
+
+      <div class="filelist" id="filelist" hidden></div>
+
+      <div class="panel soft" id="fontMini" hidden>
+        <div class="row-between">
+          <div class="vtag sm">[ Fonts ]</div>
+          <button class="link" data-view="fonts" id="goFonts">폰트 관리 →</button>
+        </div>
+        <div class="fontmini-rows" id="fontMiniRows"></div>
+      </div>
+
+      <div class="optbar" id="optbar" hidden>
+        <label class="chk"><input type="checkbox" id="embedChk" checked><span class="box"></span>폰트 임베드 (다른 PC 호환)</label>
+        <button class="cta" id="convertBtn">PPT로 변환</button>
+      </div>
+
+      <div class="panel progress" id="progress" hidden>
+        <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+        <div class="progress-text" id="progressText">준비 중…</div>
+      </div>
+
+      <div class="results" id="results" hidden>
+        <div class="vtag sm">[ Done ]</div>
+        <div id="resultrows"></div>
+      </div>
+    </section>
+
+    <!-- VIEW: fonts -->
+    <section class="view" data-view="fonts">
+      <div class="vhead">
+        <div class="vtag">[ 002 · Fonts ]</div>
+        <h1>폰트 <em>관리</em></h1>
+        <p class="lede">선택한 HTML이 쓰는 폰트를 감지해, 없는 폰트는 무료로 설치하고 PPT에 임베드합니다.</p>
+      </div>
+      <div class="panel">
+        <div class="row-between"><div class="vtag sm">[ 이 덱이 쓰는 폰트 ]</div><button class="btn ghost sm" id="installAll" hidden>없는 폰트 모두 설치</button></div>
+        <div class="fontrows" id="fontrows"><div class="empty">먼저 [변환] 탭에서 HTML을 선택하세요.</div></div>
+        <p class="note" id="fontNote"></p>
+      </div>
+    </section>
+
+    <!-- VIEW: settings -->
+    <section class="view" data-view="settings">
+      <div class="vhead"><div class="vtag">[ 003 · Settings ]</div><h1>설정</h1></div>
+      <div class="panel set">
+        <div class="setrow"><div><div class="sk">테마</div><div class="sd">앱 화면 톤</div></div>
+          <div class="seg" id="themeSeg"><button data-t="dark" class="active">다크</button><button data-t="light">라이트</button></div></div>
+        <div class="setrow"><div><div class="sk">폰트 임베드</div><div class="sd">변환 시 폰트를 PPT에 포함(기본 켜짐)</div></div>
+          <label class="chk"><input type="checkbox" id="embedDefault" checked><span class="box"></span></label></div>
+        <div class="setrow"><div><div class="sk">저장 위치</div><div class="sd">원본 HTML과 같은 폴더에 같은 이름(.pptx)으로 저장</div></div>
+          <span class="pillv">자동</span></div>
+        <div class="setrow"><div><div class="sk">슬라이드 크기</div><div class="sd">16:9 · 1920×1080 기준</div></div><span class="pillv">고정</span></div>
+      </div>
+    </section>
+
+    <!-- VIEW: about -->
+    <section class="view" data-view="about">
+      <div class="vhead"><div class="vtag">[ 004 · About ]</div><h1>PPT 메이커</h1></div>
+      <div class="panel about">
+        <p class="big">HTML 슬라이드 덱을 PowerPoint에서 <em>직접 편집 가능한</em> PPT로 변환합니다.</p>
+        <ul class="facts">
+          <li><span>[ 엔진 ]</span> 화면 렌더 → 네이티브 텍스트·도형·이미지로 재구성</li>
+          <li><span>[ 폰트 ]</span> 자동 감지 · 원클릭 설치 · PPT 임베드</li>
+          <li><span>[ AI ]</span> 사용 안 함 · API 키/로그인/과금 없음</li>
+          <li><span>[ 통신 ]</span> 로컬 동작 (폰트 받을 때만 인터넷)</li>
+          <li><span>[ 필요 ]</span> Chrome · Node.js · PowerPoint(임베드용, 선택)</li>
+        </ul>
+        <div class="sign">Birch Sound · SUNNY &nbsp;—&nbsp; v1.0</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>
