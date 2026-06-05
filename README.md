@@ -74,4 +74,4 @@ start.ps1       서버 기동 + 앱 창 (Windows)
 
 ## 라이선스
 
-MIT © Birch Sound / SUNNY
+MIT © 2026 Sunny Ryu

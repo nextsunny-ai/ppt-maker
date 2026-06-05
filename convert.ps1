@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Continue'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host "============================================" -ForegroundColor DarkGray
-Write-Host "   HTML  ->  PPT  변환기  (Birch Sound)" -ForegroundColor White
+Write-Host "   PPT 메이커  ·  HTML -> PPT  (c) 2026 Sunny Ryu" -ForegroundColor White
 Write-Host "============================================`n" -ForegroundColor DarkGray
 
 # 1) 입력 파일 수집 (드롭된 인자 우선, 없으면 파일 선택창)
