@@ -9,6 +9,7 @@
     "pptxgenjs": "^4.0.1",
     "puppeteer-core": "^25.1.0"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
+  "private": true,
   "author": "Sunny Ryu"
 }
