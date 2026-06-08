@@ -8,8 +8,18 @@ const path = require('path');
 const fs = require('fs');
 let JSZip=null; try{ JSZip=require('jszip'); }catch(e){ try{ JSZip=require('pptxgenjs/node_modules/jszip'); }catch(e2){} }
 
-// 저장된 .pptx 후처리: GRAD 마커 도형의 단색 채움을 PowerPoint 네이티브 그라데이션(gradFill)으로 변환
-async function fixGradients(file){
+// 배경 줌 애니메이션 타이밍 XML (요소별 emph 스케일, '이전 효과와 함께'=슬라이드 등장 시 자동 재생)
+function buildTiming(anims){
+  let id=5;
+  const pars=anims.map(a=>{
+    const eId=id++, bId=id++;
+    return `<p:par><p:cTn id="${eId}" presetID="6" presetClass="emph" presetSubtype="0" fill="hold" grpId="0" nodeType="withEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:animScale><p:cBhvr><p:cTn id="${bId}" dur="${a.dur}" fill="hold"/><p:tgtEl><p:spTgt spid="${a.spid}"/></p:tgtEl></p:cBhvr><p:from x="${a.from}" y="${a.from}"/><p:to x="100000" y="100000"/></p:animScale></p:childTnLst></p:cTn></p:par>`;
+  }).join('');
+  return `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${pars}</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
+}
+
+// 저장된 .pptx 후처리: (1)GRAD 마커→네이티브 그라데이션, (2)ZOOM 마커 이미지→배경 줌 애니메이션 주입
+async function fixPptx(file){
   if(!JSZip) return;
   let zip;
   try{ zip=await JSZip.loadAsync(fs.readFileSync(file)); }catch(e){ return; }
@@ -17,20 +27,33 @@ async function fixGradients(file){
   let changed=false;
   for(const sn of slides){
     let xml=await zip.file(sn).async('string');
-    if(xml.indexOf('name="GRAD|')<0) continue;
-    xml=xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (sp)=>{
-      const m=sp.match(/name="GRAD\|([01])\|([^"]*)"/);
-      if(!m) return sp;
-      const flip=m[1]==='1';
-      let stops=m[2].split(';').map(s=>{const p=s.split('@'); return {h:p[0], pos:parseInt(p[1],10), a:parseInt(p[2],10)};});
-      if(flip) stops=stops.slice().reverse().map(s=>({h:s.h, pos:100000-s.pos, a:s.a}));
-      stops.sort((a,b)=>a.pos-b.pos);
-      const gs=stops.map(s=>`<a:gs pos="${s.pos}"><a:srgbClr val="${s.h}"><a:alpha val="${s.a}"/></a:srgbClr></a:gs>`).join('');
-      const grad=`<a:gradFill rotWithShape="1"><a:gsLst>${gs}</a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>`;
-      let out=sp.replace(/<a:solidFill>[\s\S]*?<\/a:solidFill>/, grad);
-      out=out.replace(/(name=")GRAD\|[^"]*(")/, '$1Gradient$2');   // 마커 이름 정리
-      return out;
-    });
+    const hasGrad=xml.indexOf('name="GRAD|')>=0, hasZoom=xml.indexOf('name="ZOOM|')>=0;
+    if(!hasGrad && !hasZoom) continue;
+    if(hasGrad){
+      xml=xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (sp)=>{
+        const m=sp.match(/name="GRAD\|([01])\|([^"]*)"/);
+        if(!m) return sp;
+        const flip=m[1]==='1';
+        let stops=m[2].split(';').map(s=>{const p=s.split('@'); return {h:p[0], pos:parseInt(p[1],10), a:parseInt(p[2],10)};});
+        if(flip) stops=stops.slice().reverse().map(s=>({h:s.h, pos:100000-s.pos, a:s.a}));
+        stops.sort((a,b)=>a.pos-b.pos);
+        const gs=stops.map(s=>`<a:gs pos="${s.pos}"><a:srgbClr val="${s.h}"><a:alpha val="${s.a}"/></a:srgbClr></a:gs>`).join('');
+        const grad=`<a:gradFill rotWithShape="1"><a:gsLst>${gs}</a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>`;
+        let out=sp.replace(/<a:solidFill>[\s\S]*?<\/a:solidFill>/, grad);
+        out=out.replace(/(name=")GRAD\|[^"]*(")/, '$1Gradient$2');
+        return out;
+      });
+    }
+    if(hasZoom){
+      const anims=[];
+      xml=xml.replace(/<p:cNvPr id="(\d+)" name="ZOOM\|(\d+)\|(\d+)"/g, (m,id,from,dur)=>{
+        anims.push({spid:id, from:Math.min(parseInt(from,10),160000), dur:Math.max(300,Math.min(parseInt(dur,10),20000))});
+        return `<p:cNvPr id="${id}" name="Background"`;
+      });
+      if(anims.length && xml.indexOf('<p:timing>')<0){   // 슬라이드당 타이밍 1개만
+        xml=xml.replace('</p:sld>', buildTiming(anims)+'</p:sld>');
+      }
+    }
     zip.file(sn, xml); changed=true;
   }
   if(changed){ try{ fs.writeFileSync(file, await zip.generateAsync({type:'nodebuffer'})); }catch(e){} }
@@ -208,6 +231,8 @@ async function extractSlide(page, idx, opts){
     const allEls=[...sec.querySelectorAll('*')];      // DOM(=paint) 순서
     const idxOf=(el)=>{ const i=allEls.indexOf(el); return i<0?9999:i; };
 
+    // data-ppt-zoom 태그(요소 또는 가까운 조상) 읽기 → {from, dur}
+    const zoomOf=(el)=>{ let e=el; for(let i=0;i<3 && e;i++){ const z=e.getAttribute&&e.getAttribute('data-ppt-zoom'); if(z){const p=z.split(','); const f=parseFloat(p[0]), d=parseFloat(p[1]); if(f>1.008) return {from:f, dur:d};} e=e.parentElement; } return null; };
     sec.querySelectorAll('img').forEach(img=>{
       const g=rel(img); if(g.w<3||g.h<3) return;
       const cs=getComputedStyle(img);
@@ -216,7 +241,7 @@ async function extractSlide(page, idx, opts){
       const fm=filt.match(/brightness\(([\d.]+)\)/);
       const sm=filt.match(/saturate\(([\d.]+)\)/);
       ops.push({k:'img', order:idxOf(img), src:img.getAttribute('src'), g, fit:cs.objectFit, op:parseFloat(cs.opacity),
-        bright: invert?1:(fm?parseFloat(fm[1]):1), invert, sat: sm?parseFloat(sm[1]):1});
+        bright: invert?1:(fm?parseFloat(fm[1]):1), invert, sat: sm?parseFloat(sm[1]):1, zoom:zoomOf(img)});
     });
 
     // 커스텀 이미지 컴포넌트(<image-slot src>) + src 속성 가진 커스텀 요소도 이미지로 처리 (shadow DOM 안에 그려짐)
@@ -224,7 +249,7 @@ async function extractSlide(page, idx, opts){
       if(el.tagName==='PICTURE'){ if(el.querySelector('img')) return; }
       const src=el.getAttribute('src')||el.getAttribute('data-img-src'); if(!src) return;
       const g=rel(el); if(g.w<3||g.h<3) return;
-      ops.push({k:'img', order:idxOf(el), src, g, fit:(el.getAttribute('fit')||'cover'), op:1, bright:1, invert:false});
+      ops.push({k:'img', order:idxOf(el), src, g, fit:(el.getAttribute('fit')||'cover'), op:1, bright:1, invert:false, zoom:zoomOf(el)});
     });
 
     sec.querySelectorAll('*').forEach(el=>{
@@ -262,7 +287,7 @@ async function extractSlide(page, idx, opts){
         if(um){
           const bl=parseFloat(cs.borderLeftWidth)||0, bt=parseFloat(cs.borderTopWidth)||0, br=parseFloat(cs.borderRightWidth)||0, bb=parseFloat(cs.borderBottomWidth)||0;
           const area={x:g.x+bl/scale, y:g.y+bt/scale, w:g.w-(bl+br)/scale, h:g.h-(bt+bb)/scale};
-          ops.push({k:'bgimg', order:ord, area, src:um[2], size:cs.backgroundSize, posx:cs.backgroundPositionX, posy:cs.backgroundPositionY});
+          ops.push({k:'bgimg', order:ord, area, src:um[2], size:cs.backgroundSize, posx:cs.backgroundPositionX, posy:cs.backgroundPositionY, zoom:zoomOf(el)});
         }
       }
       if(bi && bi!=='none' && /gradient/.test(bi) && g.w>800 && g.h>500){
@@ -414,6 +439,24 @@ async function extractSlide(page, idx, opts){
   // deck-stage(버치형)일 때만 noscale+print로 펼침. 일반 덱은 화면(screen) 그대로 추출.
   const hasDeckStage = await page.evaluate(()=>{ const d=document.querySelector('deck-stage'); if(d){ d.setAttribute('noscale',''); return true; } return false; });
   if(hasDeckStage) await page.emulateMediaType('print');
+  // 배경 줌(켄번즈) 애니메이션 감지: 활성화 강제 '전' base 상태에서 transform scale + 지속시간을 읽어 요소에 태깅 (있는 것만)
+  const zoomN = await page.evaluate(()=>{
+    const scaleOf=(el)=>{ const t=getComputedStyle(el).transform; const m=(t||'').match(/matrix\(([^)]+)\)/); if(m){const v=m[1].split(',').map(parseFloat); return +Math.hypot(v[0],v[1]).toFixed(4);} const m3=(t||'').match(/matrix3d\(([^)]+)\)/); if(m3){const v=m3[1].split(',').map(parseFloat); return +Math.hypot(v[0],v[1]).toFixed(4);} return 1; };
+    const durOf=(el)=>{ const cs=getComputedStyle(el); let d=0; const tp=(cs.transitionProperty||'').split(',').map(s=>s.trim()); (cs.transitionDuration||'').split(',').forEach((s,i)=>{ const p=tp[i]||tp[0]||''; if(p==='transform'||p==='all') d=Math.max(d,parseFloat(s)||0); }); if((cs.animationName||'none')!=='none'){ (cs.animationDuration||'').split(',').forEach(s=>d=Math.max(d,parseFloat(s)||0)); } return d; };
+    const cands=[...document.querySelectorAll('img,[class*="bg"],[class*="hero"],[class*="cover"],[style*="background-image"]')];
+    const info=new Map();
+    cands.forEach(el=>{ const d=durOf(el); if(d>=0.3) info.set(el,d); });   // transform 트랜지션/애니 0.3초+ 인 것만
+    if(!info.size) return 0;
+    // base(비활성) scale 측정: 트랜지션·애니 잠시 끄고 active류 제거
+    const tmp=document.createElement('style'); tmp.textContent='*{transition:none!important;animation:none!important}'; document.head.appendChild(tmp);
+    const re=[]; document.querySelectorAll('section,.slide,[class*="slide"]').forEach(s=>['active','current','is-active','is-current','is-visible','visible','shown','seen','revealed'].forEach(c=>{ if(s.classList.contains(c)){s.classList.remove(c);re.push([s,c]);} }));
+    void document.body.offsetHeight;
+    let n=0;
+    info.forEach((d,el)=>{ const s=scaleOf(el); if(s>1.008 && s<1.6){ el.setAttribute('data-ppt-zoom', s.toFixed(4)+','+d.toFixed(2)); n++; } });   // 1.008~1.6배 줌만(과한 값 제외)
+    re.forEach(([s,c])=>s.classList.add(c)); tmp.remove();
+    return n;
+  }).catch(()=>0);
+  if(zoomN) console.log('배경 줌 애니메이션 감지:', zoomN, '개');
   // 등장 애니메이션(reveal) 덱 대응: 모든 슬라이드를 '활성+최종상태'로 강제 (opacity:0 등장요소가 비활성 슬라이드에서 투명하게 나오던 문제)
   await page.evaluate(()=>{
     const cls=['active','current','is-active','is-current','is-visible','visible','in-view','inview','show','shown','revealed','seen','animated','aos-animate'];
@@ -448,8 +491,10 @@ async function extractSlide(page, idx, opts){
         if(o.invert && /logo-white/i.test(o.src||'')) r=resolveSrc(o.src.replace(/logo-white/i,'logo-black'));
         if(!r) r=resolveSrc(o.src);
         if(!r) return;                                        // 실파일 없는/잘못된 이미지는 건너뜀
-        slide.addImage(Object.assign({}, r, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
-          sizing:{type:'cover', w:o.g.w*IN, h:o.g.h*IN}, transparency:o.op<1?Math.round((1-o.op)*100):0}));
+        const io=Object.assign({}, r, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
+          sizing:{type:'cover', w:o.g.w*IN, h:o.g.h*IN}, transparency:o.op<1?Math.round((1-o.op)*100):0});
+        if(o.zoom && o.zoom.from>1.008) io.objectName='ZOOM|'+Math.round(o.zoom.from*100000)+'|'+Math.round((o.zoom.dur||5)*1000);
+        slide.addImage(io);
         if(o.bright!==undefined && o.bright<0.99){
           slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
             fill:{color:'000000', transparency:Math.round(o.bright*100)}, line:{type:'none'}});
@@ -467,7 +512,9 @@ async function extractSlide(page, idx, opts){
         const file=r.path;
         const nat=imgSize(file) || {w:o.area.w, h:o.area.h};
         const pl=resolveBg(o.area, nat, o.size, o.posx, o.posy);
-        slide.addImage({path:file, x:pl.x*IN, y:pl.y*IN, w:pl.w*IN, h:pl.h*IN});
+        const bo={path:file, x:pl.x*IN, y:pl.y*IN, w:pl.w*IN, h:pl.h*IN};
+        if(o.zoom && o.zoom.from>1.008) bo.objectName='ZOOM|'+Math.round(o.zoom.from*100000)+'|'+Math.round((o.zoom.dur||5)*1000);
+        slide.addImage(bo);
       }catch(e){}
     };
     const drawRect=(o)=>{
@@ -579,6 +626,6 @@ async function extractSlide(page, idx, opts){
   }
   await browser.close();
   await pres.writeFile({fileName:OUT});
-  await fixGradients(OUT);                 // 그라데이션 마커 → 네이티브 gradFill (한 도형)
+  await fixPptx(OUT);                      // 그라데이션 마커 → gradFill, 줌 마커 → 배경 애니메이션
   console.log('PPT 생성 완료:', OUT);
 })().catch(e=>{ console.error('오류:', e.message); process.exit(1); });
