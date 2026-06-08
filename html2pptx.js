@@ -35,7 +35,8 @@ function pptFont(fam, w, italic){
   const pick=(base,steps)=>{ let s=''; for(const [mw,suf] of steps){ if(w>=mw) s=suf; } return (base+s); };
   if(/Pretendard/i.test(fam)) return pick('Pretendard',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
   if(/JetBrains|Plex Mono|monospace/i.test(fam)) return pick('JetBrains Mono',[[0,''],[500,' Medium']]);
-  if(/Spectral|Cormorant/i.test(fam)) return pick('Spectral',[[0,' Light'],[400,''],[500,' Medium']]);
+  if(/Cormorant/i.test(fam)) return 'Cormorant Garamond Light'; // 설치된 정확한 패밀리(인용문=light weight)
+  if(/Spectral/i.test(fam)) return pick('Spectral',[[0,' Light'],[400,''],[500,' Medium']]);
   return pick('Inter',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
 }
 
@@ -145,9 +146,13 @@ async function extractSlide(page, idx){
       }
       walk(blk);
       if(!runs.length) return;
+      const lh=parseFloat(cs.lineHeight)/parseFloat(cs.fontSize) || 1.2;
+      const hasBr=runs.some(r=>r.br);
+      const maxPx=Math.max(...runs.filter(r=>!r.br).map(r=>(r.size||0)*2));
+      const singleLine = !hasBr && g.h < maxPx*lh*1.5;   // 원본이 한 줄이면 PPT도 한 줄 유지
       ops.push({k:'text', order:idxOf(blk), g,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
-        lh: parseFloat(cs.lineHeight)/parseFloat(cs.fontSize) || 1.2, runs});
+        lh, singleLine, runs});
     });
 
     const secBg = col(getComputedStyle(sec).backgroundColor);
@@ -218,7 +223,7 @@ async function extractSlide(page, idx){
       });
       if(!arr.length) continue;
       const maxSize=Math.max(...o.runs.filter(r=>!r.br).map(r=>r.size||0));
-      const noWrap=maxSize>=40;
+      const noWrap=maxSize>=40 || o.singleLine;
       slide.addText(arr, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN+0.12, h:o.g.h*IN,
         align:o.align, valign:'top', margin:0, lineSpacingMultiple:o.lh, wrap:!noWrap, autoFit:false});
     }

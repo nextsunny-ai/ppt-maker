@@ -21,7 +21,7 @@ const KNOWN = {
   'Inter':          {slug:'inter',           variants:'regular,500,600,700,800,900'},
   'Pretendard':     {slug:null},  // not on gwfh; handled via jsDelivr below
   'Spectral':       {slug:'spectral',        variants:'300,300italic,regular,italic,500'},
-  'Cormorant Garamond':{slug:'cormorant-garamond', variants:'regular,500,600'},
+  'Cormorant Garamond':{slug:'cormorant-garamond', variants:'300,300italic,regular,italic,500,600,700'},
   'JetBrains Mono': {slug:'jetbrains-mono',   variants:'regular,500'},
   'Playfair Display':{slug:'playfair-display',variants:'regular,500,600,700'},
   'Poppins':        {slug:'poppins',         variants:'regular,500,600,700'},
