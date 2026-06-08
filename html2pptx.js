@@ -7,6 +7,45 @@ const PptxGenJS = require('pptxgenjs');
 const path = require('path');
 const fs = require('fs');
 
+// 이미지 파일의 자연 크기 읽기 (PNG/JPEG/GIF) — 배경이미지 비율 계산용
+function imgSize(file){
+  try{
+    const fd=fs.openSync(file,'r'); const buf=Buffer.alloc(64); const n=fs.readSync(fd,buf,0,64,0); fs.closeSync(fd);
+    if(buf[0]===0x89&&buf[1]===0x50) return {w:buf.readUInt32BE(16), h:buf.readUInt32BE(20)};          // PNG
+    if(buf[0]===0x47&&buf[1]===0x49) return {w:buf.readUInt16LE(6), h:buf.readUInt16LE(8)};            // GIF
+    if(buf[0]===0xFF&&buf[1]===0xD8){                                                                   // JPEG
+      const b=fs.readFileSync(file); let o=2;
+      while(o<b.length){ if(b[o]!==0xFF){o++;continue;} const m=b[o+1];
+        if(m>=0xC0&&m<=0xCF&&m!==0xC4&&m!==0xC8&&m!==0xCC){ return {h:b.readUInt16BE(o+5), w:b.readUInt16BE(o+7)}; }
+        o+=2+b.readUInt16BE(o+2); }
+    }
+  }catch(e){}
+  return null;
+}
+// CSS background-size/position → 실제 이미지 배치(인치 기준 px) 계산
+function resolveBg(a, nat, sizeStr, pxStr, pyStr){
+  sizeStr=(sizeStr||'auto').trim(); let w,h; const ar=nat.w/nat.h;
+  if(sizeStr==='cover'||sizeStr==='contain'){
+    const aar=a.w/a.h;
+    if((sizeStr==='cover')===(ar>aar)){ h=a.h; w=a.h*ar; } else { w=a.w; h=a.w/ar; }
+  } else {
+    const pt=sizeStr.split(/\s+/); const sx=pt[0]||'auto', sy=pt[1]||'auto';
+    const toPx=(v,base)=> (v==='auto'||v==null)?null : (/%$/.test(v)? parseFloat(v)/100*base : parseFloat(v));
+    let wpx=toPx(sx,a.w), hpx=toPx(sy,a.h);
+    if(wpx==null&&hpx==null){ w=nat.w; h=nat.h; }
+    else if(wpx==null){ h=hpx; w=hpx*ar; }
+    else if(hpx==null){ w=wpx; h=wpx/ar; }
+    else { w=wpx; h=hpx; }
+  }
+  const pos=(v,base,size)=>{ v=(v||'').trim();
+    if(/%$/.test(v)) return parseFloat(v)/100*(base-size);
+    if(v==='left'||v==='top') return 0;
+    if(v==='right'||v==='bottom') return base-size;
+    if(v==='center') return (base-size)/2;
+    return parseFloat(v)||0; };
+  return {x:a.x+pos(pxStr,a.w,w), y:a.y+pos(pyStr,a.h,h), w, h};
+}
+
 // ---- locate an installed Chrome / Edge ----
 function findChrome(){
   const c = [
@@ -99,6 +138,15 @@ async function extractSlide(page, idx){
       const sides=[['top',g.x,g.y,g.x+g.w,g.y],['bottom',g.x,g.y+g.h,g.x+g.w,g.y+g.h],['left',g.x,g.y,g.x,g.y+g.h],['right',g.x+g.w,g.y,g.x+g.w,g.y+g.h]];
       for(const [s,x1,y1,x2,y2] of sides){ const w=W(s),c=C(s); if(w>0.4 && c && c.a>0.05) ops.push({k:'line',order:ord,x1,y1,x2,y2,color:c.hex,a:c.a,w}); }
       const bi=cs.backgroundImage;
+      // 래스터 배경이미지(url) → 이미지로 (헤더 로고 등 CSS background 처리)
+      if(bi && bi!=='none' && !/gradient/.test(bi)){
+        const um=bi.match(/url\((['"]?)([^'")]+)\1\)/);
+        if(um){
+          const bl=parseFloat(cs.borderLeftWidth)||0, bt=parseFloat(cs.borderTopWidth)||0, br=parseFloat(cs.borderRightWidth)||0, bb=parseFloat(cs.borderBottomWidth)||0;
+          const area={x:g.x+bl/scale, y:g.y+bt/scale, w:g.w-(bl+br)/scale, h:g.h-(bt+bb)/scale};
+          ops.push({k:'bgimg', order:ord, area, src:um[2], size:cs.backgroundSize, posx:cs.backgroundPositionX, posy:cs.backgroundPositionY});
+        }
+      }
       if(bi && bi!=='none' && /gradient/.test(bi) && g.w>800 && g.h>500){
         const ps=[...bi.matchAll(/rgba?\(([^)]+)\)/g)].map(m=>m[1].split(',').map(Number));
         if(ps.length){
@@ -165,7 +213,11 @@ async function extractSlide(page, idx){
           for(const t of tops){ if(t-prev>gap){ nLines++; prev=t; } } }
       }catch(e){}
       const singleLine = !hasBr && nLines<=1;   // 원본이 한 줄이면 PPT도 한 줄 유지
-      ops.push({k:'text', order:idxOf(blk), g,
+      // 패딩 보정: 테두리박스가 아닌 콘텐츠박스에서 텍스트 시작 (헤더 로고 자리 padding-left 등)
+      const pL=(parseFloat(cs.paddingLeft)||0)/scale, pT=(parseFloat(cs.paddingTop)||0)/scale,
+            pR=(parseFloat(cs.paddingRight)||0)/scale, pB=(parseFloat(cs.paddingBottom)||0)/scale;
+      const gt = (pL||pT||pR||pB)? {x:g.x+pL, y:g.y+pT, w:Math.max(4,g.w-pL-pR), h:Math.max(4,g.h-pT-pB)} : g;
+      ops.push({k:'text', order:idxOf(blk), g:gt,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
         lh, lhPt, singleLine, runs});
     });
@@ -215,6 +267,17 @@ async function extractSlide(page, idx){
         }
       }catch(e){}
     };
+    const drawBgImg=(o)=>{
+      try{
+        let u=o.src, file;
+        if(/^file:/i.test(u)) file=decodeURIComponent(u.replace(/^file:\/+/i,'')).replace(/\//g,'\\');
+        else if(/^https?:/i.test(u)) file=u;
+        else file=path.join(path.dirname(HTML), u);
+        const nat=imgSize(file) || {w:o.area.w, h:o.area.h};
+        const pl=resolveBg(o.area, nat, o.size, o.posx, o.posy);
+        slide.addImage({path:file, x:pl.x*IN, y:pl.y*IN, w:pl.w*IN, h:pl.h*IN});
+      }catch(e){}
+    };
     const drawRect=(o)=>{
       const opt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN};
       if(o.fill) opt.fill={color:o.fill.hex, transparency:Math.round((1-o.fill.a)*100)}; else opt.fill={type:'none'};
@@ -227,7 +290,7 @@ async function extractSlide(page, idx){
     };
     // 배경·이미지·도형·선 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
     const nonText=data.ops.filter(o=>o.k!=='text').sort((a,b)=>(a.order||0)-(b.order||0));
-    for(const o of nonText){ if(o.k==='img') drawImg(o); else if(o.k==='line') drawLine(o); else drawRect(o); }
+    for(const o of nonText){ if(o.k==='img') drawImg(o); else if(o.k==='bgimg') drawBgImg(o); else if(o.k==='line') drawLine(o); else drawRect(o); }
     const texts=data.ops.filter(o=>o.k==='text').sort((a,b)=>(a.order||0)-(b.order||0));
     for(const o of texts){
       const arr=[];
