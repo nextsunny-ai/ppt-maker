@@ -246,6 +246,15 @@ async function extractSlide(page, idx){
         let px,pw,py,ph;
         if(L!=null&&R!=null){px=cbL+L;pw=cbW-L-R;} else if(Wd!=null){px=cbL+(L!=null?L:(R!=null?cbW-R-Wd:0));pw=Wd;} else {px=cbL;pw=cbW;}
         if(T!=null&&B!=null){py=cbT+T;ph=cbH-T-B;} else if(Hd!=null){py=cbT+(T!=null?T:(B!=null?cbH-B-Hd:0));ph=Hd;} else {py=cbT;ph=cbH;}
+        // 가상요소 transform(scale/translate) 적용 — getBoundingClientRect가 없으므로 직접 (예: scaleX(.32)로 길이 다른 악센트 바)
+        const tm=(cs2.transform||'none').match(/matrix\(([^)]+)\)/);
+        if(tm){
+          const m=tm[1].split(',').map(parseFloat); const a=m[0],d=m[3],e=m[4],f=m[5];
+          const to=(cs2.transformOrigin||'0px 0px').split(' ').map(parseFloat);
+          const oX=px+(to[0]||0), oY=py+(to[1]||0);
+          px=oX+(px-oX)*a+e; pw=pw*a;
+          py=oY+(py-oY)*d+f; ph=ph*d;
+        }
         const gp={x:(px-SR.left)/scale, y:(py-SR.top)/scale, w:pw/scale, h:ph/scale};
         if(gp.w<1||gp.h<1) continue;
         let mx=ord; el.querySelectorAll('*').forEach(d=>{const i=idxOf(d); if(i>mx)mx=i;});
