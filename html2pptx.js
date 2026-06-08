@@ -56,6 +56,8 @@ async function extractSlide(page, idx){
       return {hex:(h(p[0])+h(p[1])+h(p[2])).toUpperCase(), a:p[3]===undefined?1:p[3]};
     }
     const isBlock = (d)=>/(block|flex|grid|list-item|table)/.test(d) || d==='inline-block' || d==='inline-flex';
+    // 부모보다 폰트가 훨씬 큰 인라인 강조(예: 작은 제목 옆 거대한 이탤릭) = 독립 박스로 분리
+    const bigAccent=(el)=>false; // (비활성) 거대 인라인 분리는 상단 겹침 유발 → 되돌림
     const ops=[];
     const allEls=[...sec.querySelectorAll('*')];      // DOM(=paint) 순서
     const idxOf=(el)=>{ const i=allEls.indexOf(el); return i<0?9999:i; };
@@ -79,21 +81,23 @@ async function extractSlide(page, idx){
     });
 
     sec.querySelectorAll('*').forEach(el=>{
-      if(el.tagName==='IMG'||el.tagName==='BR') return;
+      if(el.tagName==='IMG'||el.tagName==='BR'||el.tagName==='IMAGE-SLOT') return;
       const cs=getComputedStyle(el);
       if(cs.display==='none'||cs.visibility==='hidden') return;
-      const g=rel(el); if(g.w<4||g.h<4) return;
+      const g=rel(el);
       const bg=col(cs.backgroundColor);
-      const bw=parseFloat(cs.borderTopWidth)||0;
-      const bc=col(cs.borderTopColor);
-      const hasBorder = bw>0 && bc && bc.a>0.02 &&
-        (parseFloat(cs.borderRightWidth)||0)>0 && (parseFloat(cs.borderBottomWidth)||0)>0 && (parseFloat(cs.borderLeftWidth)||0)>0;
-      const hasBg = bg && bg.a>0.02;
-      if(hasBorder||hasBg){
-        ops.push({k:'rect', order:idxOf(el), g,
-          fill: hasBg? {hex:bg.hex, a:bg.a} : null,
-          line: hasBorder? {hex:bc.hex, a:bc.a, w:bw} : null});
-      }
+      const ord=idxOf(el);
+      // 얇은 선/바 (bg로 그린 divider) → 선으로
+      if(g.h>0 && g.h<=4 && g.w>=8 && bg && bg.a>0.05){ ops.push({k:'line',order:ord,x1:g.x,y1:g.y+g.h/2,x2:g.x+g.w,y2:g.y+g.h/2,color:bg.hex,a:bg.a,w:Math.max(g.h,1)}); return; }
+      if(g.w>0 && g.w<=4 && g.h>=8 && bg && bg.a>0.05){ ops.push({k:'line',order:ord,x1:g.x+g.w/2,y1:g.y,x2:g.x+g.w/2,y2:g.y+g.h,color:bg.hex,a:bg.a,w:Math.max(g.w,1)}); return; }
+      if(g.w<4||g.h<4) return;
+      // bg 채움
+      if(bg && bg.a>0.02){ ops.push({k:'rect', order:ord, g, fill:{hex:bg.hex,a:bg.a}, line:null}); }
+      // 테두리: 면별로 선 추출 (한쪽만 있어도 잡음)
+      const W=s=>parseFloat(cs.getPropertyValue('border-'+s+'-width'))||0;
+      const C=s=>col(cs.getPropertyValue('border-'+s+'-color'));
+      const sides=[['top',g.x,g.y,g.x+g.w,g.y],['bottom',g.x,g.y+g.h,g.x+g.w,g.y+g.h],['left',g.x,g.y,g.x,g.y+g.h],['right',g.x+g.w,g.y,g.x+g.w,g.y+g.h]];
+      for(const [s,x1,y1,x2,y2] of sides){ const w=W(s),c=C(s); if(w>0.4 && c && c.a>0.05) ops.push({k:'line',order:ord,x1,y1,x2,y2,color:c.hex,a:c.a,w}); }
       const bi=cs.backgroundImage;
       if(bi && bi!=='none' && /gradient/.test(bi) && g.w>800 && g.h>500){
         const ps=[...bi.matchAll(/rgba?\(([^)]+)\)/g)].map(m=>m[1].split(',').map(Number));
@@ -111,7 +115,7 @@ async function extractSlide(page, idx){
     while((tn=walker.nextNode())){
       if(!tn.textContent.trim()) continue;
       let blk=tn.parentElement;
-      while(blk && blk!==sec){ if(isBlock(getComputedStyle(blk).display)) break; blk=blk.parentElement; }
+      while(blk && blk!==sec){ if(isBlock(getComputedStyle(blk).display)||bigAccent(blk)) break; blk=blk.parentElement; }
       if(!blk) blk=tn.parentElement;
       if(!groups.has(blk)) groups.set(blk,[]);
       groups.get(blk).push(tn);
@@ -140,19 +144,22 @@ async function extractSlide(page, idx){
             if(ch.tagName==='BR'){ runs.push({br:true}); }
             else if(ch.tagName==='IMG'){}
             else if(isBlock(getComputedStyle(ch).display)){}
+            else if(bigAccent(ch)){} // 독립 박스로 별도 처리
             else walk(ch);
           }
         });
       }
       walk(blk);
       if(!runs.length) return;
-      const lh=parseFloat(cs.lineHeight)/parseFloat(cs.fontSize) || 1.2;
+      const lhpx=parseFloat(cs.lineHeight);
+      const lh = lhpx/parseFloat(cs.fontSize) || 1.2;
+      const lhPt = isNaN(lhpx)? null : Math.round(lhpx*0.5*10)/10;   // HTML 줄높이를 절대값(pt)으로
       const hasBr=runs.some(r=>r.br);
       const maxPx=Math.max(...runs.filter(r=>!r.br).map(r=>(r.size||0)*2));
       const singleLine = !hasBr && g.h < maxPx*lh*1.5;   // 원본이 한 줄이면 PPT도 한 줄 유지
       ops.push({k:'text', order:idxOf(blk), g,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
-        lh, singleLine, runs});
+        lh, lhPt, singleLine, runs});
     });
 
     const secBg = col(getComputedStyle(sec).backgroundColor);
@@ -206,9 +213,13 @@ async function extractSlide(page, idx){
       if(o.line) opt.line={color:o.line.hex, width:Math.max(0.5,o.line.w*0.75), transparency:Math.round((1-o.line.a)*100)};
       slide.addShape(pres.shapes.RECTANGLE, opt);
     };
-    // 배경·이미지·도형 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
+    const drawLine=(o)=>{
+      slide.addShape(pres.shapes.LINE, {x:o.x1*IN, y:o.y1*IN, w:(o.x2-o.x1)*IN, h:(o.y2-o.y1)*IN,
+        line:{color:o.color, width:Math.max(0.5,o.w*0.75), transparency:Math.round((1-o.a)*100)}});
+    };
+    // 배경·이미지·도형·선 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
     const nonText=data.ops.filter(o=>o.k!=='text').sort((a,b)=>(a.order||0)-(b.order||0));
-    for(const o of nonText){ if(o.k==='img') drawImg(o); else drawRect(o); }
+    for(const o of nonText){ if(o.k==='img') drawImg(o); else if(o.k==='line') drawLine(o); else drawRect(o); }
     const texts=data.ops.filter(o=>o.k==='text').sort((a,b)=>(a.order||0)-(b.order||0));
     for(const o of texts){
       const arr=[];
