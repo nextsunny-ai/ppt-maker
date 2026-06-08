@@ -88,12 +88,20 @@ async function extractSlide(page, idx){
     const SR = sec.getBoundingClientRect();
     const scale = SR.width/1920;
     const rel = (el)=>{const r=el.getBoundingClientRect();return{x:(r.left-SR.left)/scale,y:(r.top-SR.top)/scale,w:r.width/scale,h:r.height/scale};};
+    const _ccv=document.createElement('canvas'); _ccv.width=_ccv.height=1; const _ccx=_ccv.getContext('2d',{willReadFrequently:true});
     function col(c){
-      if(!c||c==='transparent'||c==='rgba(0, 0, 0, 0)') return null;
-      const m=c.match(/rgba?\(([^)]+)\)/); if(!m) return null;
-      const p=m[1].split(',').map(s=>parseFloat(s));
+      if(!c||c==='transparent'||c==='rgba(0, 0, 0, 0)'||c==='none') return null;
       const h=n=>('0'+Math.round(n).toString(16)).slice(-2);
-      return {hex:(h(p[0])+h(p[1])+h(p[2])).toUpperCase(), a:p[3]===undefined?1:p[3]};
+      const m=c.match(/^rgba?\(([^)]+)\)/);
+      if(m){ const p=m[1].split(/[,\s\/]+/).filter(s=>s!=='').map(s=>parseFloat(s));
+        return {hex:(h(p[0])+h(p[1])+h(p[2])).toUpperCase(), a:p[3]===undefined?1:p[3]}; }
+      // rgb 외 색(oklch/oklab/hsl/lab/color()/named 등) → canvas 픽셀로 실제 sRGB 변환
+      try{
+        _ccx.clearRect(0,0,1,1); _ccx.fillStyle='#000'; _ccx.fillStyle=c; _ccx.fillRect(0,0,1,1);
+        const d=_ccx.getImageData(0,0,1,1).data; const a=d[3]/255;
+        if(a<=0) return null;
+        return {hex:(h(d[0])+h(d[1])+h(d[2])).toUpperCase(), a};
+      }catch(e){ return null; }
     }
     const isBlock = (d)=>/(block|flex|grid|list-item|table)/.test(d) || d==='inline-block' || d==='inline-flex';
     // 인라인 구문요소: flex/grid 컨테이너의 자식이면 display가 block으로 blockify되지만 의미상 인라인
