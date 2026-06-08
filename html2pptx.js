@@ -292,8 +292,8 @@ async function extractSlide(page, idx){
       let txRect=null;
       if(ok){
         txRect={x:(l-SR.left)/scale, y:(t-SR.top)/scale, w:(r-l)/scale, h:(bt-t)/scale};
-        if(hasBlockChild) g=txRect;                                   // 라벨+본문 혼합 → 텍스트 박스 전체로
-        else if(fsBlk<48 && txRect.h > g.h*1.5){ g={x:g.x, y:txRect.y, w:g.w, h:txRect.h}; }  // 작은 본문의 찌부러진(overflow) 박스만 세로 보정
+        if(hasBlockChild && fsBlk<48) g=txRect;                       // 작은 라벨+본문 혼합(캡션 등)만 텍스트 박스로. 큰 제목 혼합(THREE+인라인블록)은 박스 유지
+        else if(!hasBlockChild && fsBlk<48 && txRect.h > g.h*1.5){ g={x:g.x, y:txRect.y, w:g.w, h:txRect.h}; }  // 작은 본문의 찌부러진(overflow) 박스만 세로 보정
       }
       const runs=[];
       function walk(node){
@@ -392,10 +392,10 @@ async function extractSlide(page, idx){
           slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
             fill:{color:'000000', transparency:Math.round(o.bright*100)}, line:{type:'none'}});
         }
-        // saturate(<1) 필터는 PPT에서 적용 불가 → 페이지 배경색으로 (1-sat)만큼 옅게 덮어 탈채도 근사 (사진이 차분/화이트해짐)
+        // saturate(<1)는 PPT 적용 불가 → 중성 회색으로 (1-sat)만큼 덮어 '탈채도' 근사 (밝은 배경색으로 덮으면 어두운 음영까지 하얘지므로 회색 사용)
         if(o.sat!==undefined && o.sat<0.97){
           slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
-            fill:{color:(data.bg||'F2EFE9'), transparency:Math.round(o.sat*100)}, line:{type:'none'}});
+            fill:{color:'8A8079', transparency:Math.round(o.sat*100)}, line:{type:'none'}});
         }
       }catch(e){}
     };
