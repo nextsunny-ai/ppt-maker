@@ -96,6 +96,20 @@ async function extractSlide(page, idx){
       return {hex:(h(p[0])+h(p[1])+h(p[2])).toUpperCase(), a:p[3]===undefined?1:p[3]};
     }
     const isBlock = (d)=>/(block|flex|grid|list-item|table)/.test(d) || d==='inline-block' || d==='inline-flex';
+    // 인라인 구문요소: flex/grid 컨테이너의 자식이면 display가 block으로 blockify되지만 의미상 인라인
+    const PHRASING=new Set(['B','STRONG','I','EM','SMALL','SPAN','A','SUP','SUB','MARK','U','CODE','ABBR','TIME','LABEL','FONT','CITE','Q','S','INS','DEL','BDI','BDO']);
+    const isBlockEl=(el)=>{
+      if(!isBlock(getComputedStyle(el).display)) return false;
+      const par=el.parentElement;
+      if(par && /(flex|grid)/.test(getComputedStyle(par).display) && PHRASING.has(el.tagName)){
+        // 부모가 직접 텍스트노드를 가진 '텍스트 줄'이고, 자신이 칩(패딩/테두리/배경)이 아닐 때만 인라인 취급
+        const hasText=[...par.childNodes].some(n=>n.nodeType===3 && n.textContent.trim());
+        const cs=getComputedStyle(el); const cb=col(cs.backgroundColor);
+        const looksChip=(parseFloat(cs.paddingLeft)||0)>2 || cs.borderLeftStyle!=='none' || (cb&&cb.a>0.02);
+        if(hasText && !looksChip) return false;
+      }
+      return true;
+    };
     // 부모보다 폰트가 훨씬 큰 인라인 강조(예: 작은 제목 옆 거대한 이탤릭) = 독립 박스로 분리
     const bigAccent=(el)=>false; // (비활성) 거대 인라인 분리는 상단 겹침 유발 → 되돌림
     // 최상위 콤마로 background 레이어 분리(괄호 안 콤마 보호)
@@ -206,7 +220,7 @@ async function extractSlide(page, idx){
     while((tn=walker.nextNode())){
       if(!tn.textContent.trim()) continue;
       let blk=tn.parentElement;
-      while(blk && blk!==sec){ if(isBlock(getComputedStyle(blk).display)||bigAccent(blk)) break; blk=blk.parentElement; }
+      while(blk && blk!==sec){ if(isBlockEl(blk)||bigAccent(blk)) break; blk=blk.parentElement; }
       if(!blk) blk=tn.parentElement;
       if(!groups.has(blk)) groups.set(blk,[]);
       groups.get(blk).push(tn);
@@ -234,7 +248,7 @@ async function extractSlide(page, idx){
           } else if(ch.nodeType===1){
             if(ch.tagName==='BR'){ runs.push({br:true}); }
             else if(ch.tagName==='IMG'){}
-            else if(isBlock(getComputedStyle(ch).display)){}
+            else if(isBlockEl(ch)){}
             else if(bigAccent(ch)){} // 독립 박스로 별도 처리
             else walk(ch);
           }

@@ -31,24 +31,30 @@ const KNOWN = {
   'Lato':           {slug:'lato',            variants:'regular,700'},
 };
 
+// 폰트 스택을 순서대로(=브라우저 우선순위) 보고 첫 '실제' 폰트를 정규화해 반환.
+// (예전 버그: Pretendard를 먼저 검사해 "Inter, Pretendard…"를 Inter가 아닌 Pretendard로 오인)
 function canonical(ff){
   ff=ff||'';
-  if(/Pretendard/i.test(ff)) return 'Pretendard';
-  if(/JetBrains/i.test(ff)) return 'JetBrains Mono';
-  if(/Spectral/i.test(ff)) return 'Spectral';
-  if(/Cormorant/i.test(ff)) return 'Cormorant Garamond';
-  if(/Inter/i.test(ff)) return 'Inter';
-  if(/Playfair/i.test(ff)) return 'Playfair Display';
-  if(/Poppins/i.test(ff)) return 'Poppins';
-  if(/Montserrat/i.test(ff)) return 'Montserrat';
-  if(/Noto Sans KR/i.test(ff)) return 'Noto Sans KR';
-  if(/Roboto/i.test(ff)) return 'Roboto';
-  if(/Lato/i.test(ff)) return 'Lato';
-  // generic stacks we ignore
-  if(/^(system-ui|sans-serif|serif|monospace|-apple-system|Segoe|Arial|Helvetica|Georgia)/i.test(ff.trim())) return null;
-  // unknown named font: return its first family token
-  const first=ff.split(',')[0].replace(/['"]/g,'').trim();
-  return first || null;
+  const toks=ff.split(',').map(t=>t.replace(/['"]/g,'').trim()).filter(Boolean);
+  const generic=/^(system-ui|ui-sans-serif|ui-serif|ui-monospace|sans-serif|serif|monospace|-apple-system|BlinkMacSystemFont|Segoe UI|Segoe|Apple SD Gothic Neo|Malgun Gothic|Arial|Helvetica( Neue)?|Georgia|Times( New Roman)?|SF Pro( Display| Text)?|SF Mono)$/i;
+  for(const t of toks){
+    if(generic.test(t)) continue;            // 시스템/대체용 generic은 건너뜀
+    if(/Pretendard/i.test(t)) return 'Pretendard';
+    if(/JetBrains/i.test(t)) return 'JetBrains Mono';
+    if(/Spectral/i.test(t)) return 'Spectral';
+    if(/Cormorant/i.test(t)) return 'Cormorant Garamond';
+    if(/^Inter\b/i.test(t)) return 'Inter';
+    if(/Playfair/i.test(t)) return 'Playfair Display';
+    if(/Poppins/i.test(t)) return 'Poppins';
+    if(/Montserrat/i.test(t)) return 'Montserrat';
+    if(/Noto Sans KR/i.test(t)) return 'Noto Sans KR';
+    if(/Noto Serif KR/i.test(t)) return 'Noto Serif KR';
+    if(/IBM Plex Mono/i.test(t)) return 'IBM Plex Mono';
+    if(/Roboto/i.test(t)) return 'Roboto';
+    if(/Lato/i.test(t)) return 'Lato';
+    return t;                                 // 알 수 없는 named 폰트 = 그대로
+  }
+  return null;
 }
 
 async function detectUsedFonts(htmlPath){
