@@ -121,7 +121,11 @@ if(!CHROME){ console.error('Chrome/Edge를 찾을 수 없습니다. Chrome을 �
 
 const IN = 13.333 / 1920;   // px -> inch  (슬라이드 폭이 1920px HTML과 1:1)
 const PT = IN * 72;         // px -> pt  (위치·글자크기와 동일한 척도. 선 두께도 이 값으로 HTML 그대로 재현)
-function fileUrl(p){ return 'file:///' + p.replace(/\\/g,'/'); }
+function fileUrl(p){
+  // 경로의 # ? % 공백 등을 올바르게 인코딩 (폴더명에 # 쓰면 file:// fragment로 깨져 디렉터리 목록이 로드되던 문제)
+  try{ return require('url').pathToFileURL(p).href; }
+  catch(e){ return 'file:///' + p.replace(/\\/g,'/').replace(/%/g,'%25').replace(/#/g,'%23').replace(/\?/g,'%3F').replace(/ /g,'%20'); }
+}
 
 function pptFont(fam, w, italic){
   fam=fam||''; w=w||400;
