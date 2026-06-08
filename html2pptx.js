@@ -56,6 +56,8 @@ async function extractSlide(page, idx){
     }
     const isBlock = (d)=>/(block|flex|grid|list-item|table)/.test(d) || d==='inline-block' || d==='inline-flex';
     const ops=[];
+    const allEls=[...sec.querySelectorAll('*')];      // DOM(=paint) 순서
+    const idxOf=(el)=>{ const i=allEls.indexOf(el); return i<0?9999:i; };
 
     sec.querySelectorAll('img').forEach(img=>{
       const g=rel(img); if(g.w<3||g.h<3) return;
@@ -63,7 +65,7 @@ async function extractSlide(page, idx){
       const filt=cs.filter||'';
       const invert=/invert\(/.test(filt);
       const fm=filt.match(/brightness\(([\d.]+)\)/);
-      ops.push({k:'img', src:img.getAttribute('src'), g, fit:cs.objectFit, op:parseFloat(cs.opacity),
+      ops.push({k:'img', order:idxOf(img), src:img.getAttribute('src'), g, fit:cs.objectFit, op:parseFloat(cs.opacity),
         bright: invert?1:(fm?parseFloat(fm[1]):1), invert});
     });
 
@@ -79,7 +81,7 @@ async function extractSlide(page, idx){
         (parseFloat(cs.borderRightWidth)||0)>0 && (parseFloat(cs.borderBottomWidth)||0)>0 && (parseFloat(cs.borderLeftWidth)||0)>0;
       const hasBg = bg && bg.a>0.02;
       if(hasBorder||hasBg){
-        ops.push({k:'rect', g,
+        ops.push({k:'rect', order:idxOf(el), g,
           fill: hasBg? {hex:bg.hex, a:bg.a} : null,
           line: hasBorder? {hex:bc.hex, a:bc.a, w:bw} : null});
       }
@@ -90,7 +92,7 @@ async function extractSlide(page, idx){
           let r=0,gg=0,b=0,sa=0,asum=0;
           ps.forEach(p=>{const al=p[3]===undefined?1:p[3]; r+=p[0]*al; gg+=p[1]*al; b+=p[2]*al; sa+=al; asum+=al;});
           const h=n=>('0'+Math.round(n).toString(16)).slice(-2);
-          ops.push({k:'rect', g, fill:{hex:(h(r/sa)+h(gg/sa)+h(b/sa)).toUpperCase(), a: asum/ps.length}, line:null});
+          ops.push({k:'rect', order:idxOf(el), g, fill:{hex:(h(r/sa)+h(gg/sa)+h(b/sa)).toUpperCase(), a: asum/ps.length}, line:null});
         }
       }
     });
@@ -135,7 +137,7 @@ async function extractSlide(page, idx){
       }
       walk(blk);
       if(!runs.length) return;
-      ops.push({k:'text', g,
+      ops.push({k:'text', order:idxOf(blk), g,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
         lh: parseFloat(cs.lineHeight)/parseFloat(cs.fontSize) || 1.2, runs});
     });
@@ -150,10 +152,15 @@ async function extractSlide(page, idx){
   const browser=await puppeteer.launch({executablePath:CHROME, headless:'new', args:['--no-sandbox','--force-device-scale-factor=1']});
   const page=await browser.newPage();
   await page.setViewport({width:1920,height:1080,deviceScaleFactor:1});
-  await page.goto(fileUrl(HTML), {waitUntil:'networkidle0'});
-  await page.evaluate(()=>{ const d=document.querySelector('deck-stage'); if(d) d.setAttribute('noscale',''); });
-  await page.emulateMediaType('print');
-  await new Promise(r=>setTimeout(r,1500));
+  try{ await page.goto(fileUrl(HTML), {waitUntil:'domcontentloaded', timeout:60000}); }
+  catch(e){ await page.goto(fileUrl(HTML), {waitUntil:'load', timeout:60000}).catch(()=>{}); }
+  // 폰트·이미지 로딩 대기 (networkidle 의존 X = CDN/무거운 덱에서도 안전)
+  try{ await page.evaluate(()=>document.fonts && document.fonts.ready); }catch(e){}
+  try{ await page.evaluate(()=>Promise.all([...document.images].filter(i=>!i.complete).map(i=>new Promise(r=>{i.onload=i.onerror=r;setTimeout(r,3000);})))); }catch(e){}
+  // deck-stage(버치형)일 때만 noscale+print로 펼침. 일반 덱은 화면(screen) 그대로 추출.
+  const hasDeckStage = await page.evaluate(()=>{ const d=document.querySelector('deck-stage'); if(d){ d.setAttribute('noscale',''); return true; } return false; });
+  if(hasDeckStage) await page.emulateMediaType('print');
+  await new Promise(r=>setTimeout(r,1800));
 
   const N = await page.evaluate(()=>document.querySelectorAll('section').length);
   console.log('슬라이드 수:', N);
@@ -167,10 +174,7 @@ async function extractSlide(page, idx){
     const slide=pres.addSlide();
     if(data && data.bg) slide.background={color:data.bg};
     if(!data){ console.log('  슬라이드',i,'(빈 데이터)'); continue; }
-    const imgs=data.ops.filter(o=>o.k==='img');
-    const rects=data.ops.filter(o=>o.k==='rect').sort((a,b)=>(b.g.w*b.g.h)-(a.g.w*a.g.h));
-    const texts=data.ops.filter(o=>o.k==='text');
-    for(const o of imgs){
+    const drawImg=(o)=>{
       try{
         let srcRel=o.src;
         if(o.invert && /logo-white/i.test(srcRel)) srcRel=srcRel.replace(/logo-white/i,'logo-black');
@@ -182,13 +186,17 @@ async function extractSlide(page, idx){
             fill:{color:'000000', transparency:Math.round(o.bright*100)}, line:{type:'none'}});
         }
       }catch(e){}
-    }
-    for(const o of rects){
+    };
+    const drawRect=(o)=>{
       const opt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN};
       if(o.fill) opt.fill={color:o.fill.hex, transparency:Math.round((1-o.fill.a)*100)}; else opt.fill={type:'none'};
       if(o.line) opt.line={color:o.line.hex, width:Math.max(0.5,o.line.w*0.75), transparency:Math.round((1-o.line.a)*100)};
       slide.addShape(pres.shapes.RECTANGLE, opt);
-    }
+    };
+    // 배경·이미지·도형 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
+    const nonText=data.ops.filter(o=>o.k!=='text').sort((a,b)=>(a.order||0)-(b.order||0));
+    for(const o of nonText){ if(o.k==='img') drawImg(o); else drawRect(o); }
+    const texts=data.ops.filter(o=>o.k==='text').sort((a,b)=>(a.order||0)-(b.order||0));
     for(const o of texts){
       const arr=[];
       o.runs.forEach(r=>{
