@@ -100,19 +100,30 @@ $('#convertBtn').onclick=async()=>{
   const btn=$('#convertBtn'); btn.disabled=true; btn.classList.remove('ready');
   $('#progress').hidden=false; $('#results').hidden=true;
   const fill=$('#barFill'), txt=$('#progressText');
-  txt.textContent='슬라이드 렌더링 중… (12장 기준 15~25초)'; fill.style.width='15%';
+  txt.textContent='슬라이드 렌더링 + 미리보기 생성 중… (장수에 따라 수십 초)'; fill.style.width='15%';
   let pct=15; const tick=setInterval(()=>{pct=Math.min(pct+4,88);fill.style.width=pct+'%';},600);
   const embed=$('#embedChk').checked;
-  const {outputs=[]}=await api('/convert',{paths:state.files,embed,orient:state.orient});
-  clearInterval(tick); fill.style.width='100%'; txt.textContent=embed?'폰트 임베드 완료':'변환 완료';
-  setTimeout(()=>{ $('#progress').hidden=true; showResults(outputs); btn.disabled=false; },500);
+  const {outputs=[],previews=[]}=await api('/convert',{paths:state.files,embed,orient:state.orient});
+  clearInterval(tick); fill.style.width='100%'; txt.textContent=embed?'폰트 임베드 + 미리보기 완료':'변환 + 미리보기 완료';
+  setTimeout(()=>{ $('#progress').hidden=true; showResults(outputs,previews); btn.disabled=false; },500);
 };
-function showResults(outs){
+function showResults(outs, previews){
+  previews = previews||[];
+  const byOut={}; previews.forEach(p=>byOut[p.out]=p);
   $('#results').hidden=false;
-  $('#resultrows').innerHTML = outs.length? outs.map(o=>`<div class="resultrow"><div class="rl"><span class="ic">P</span><span class="rn" title="${o}">${baseName(o)}</span></div><button class="btn ghost sm" data-open="${o}">폴더에서 보기</button></div>`).join('')
-    : '<div class="empty">생성된 파일이 없습니다.</div>';
+  $('#resultrows').innerHTML = outs.length? outs.map(o=>{
+    const pv=byOut[o];
+    const grid = (pv && pv.thumbs && pv.thumbs.length)
+      ? `<div class="thumbs${pv.portrait?' port':''}">`+pv.thumbs.map((t,i)=>`<button class="thumb" data-full="${t}" data-cap="${i+1}"><img loading="lazy" src="${t}" alt="슬라이드 ${i+1}"><span class="tn">${i+1}</span></button>`).join('')+`</div>`
+      : '';
+    return `<div class="resultrow"><div class="rl"><span class="ic">P</span><span class="rn" title="${o}">${baseName(o)}</span>${pv?`<span class="rmeta">${pv.n}장</span>`:''}</div><button class="btn ghost sm" data-open="${o}">폴더에서 보기</button></div>${grid}`;
+  }).join('') : '<div class="empty">생성된 파일이 없습니다.</div>';
   $('#resultrows').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>api('/reveal',{path:b.dataset.open}));
+  $('#resultrows').querySelectorAll('.thumb').forEach(b=>b.onclick=()=>openLightbox(b.dataset.full,b.dataset.cap));
 }
+/* ---------- lightbox (미리보기 확대) ---------- */
+function openLightbox(src,cap){ $('#lbImg').src=src; $('#lbCap').textContent='슬라이드 '+cap; $('#lightbox').hidden=false; }
+function closeLightbox(){ $('#lightbox').hidden=true; $('#lbImg').src=''; }
 
 /* ---------- drop + launch arg ---------- */
 $('#drop').onclick=pick;
@@ -127,3 +138,7 @@ $('#drop').addEventListener('drop',e=>{
   setTimeout(()=>{ h.innerHTML=orig; h.style.color=''; }, 3500);
 });
 (function(){ const q=new URLSearchParams(location.search).getAll('file'); if(q.length) addFiles(q); })();
+
+/* lightbox 닫기 */
+$('#lightbox').addEventListener('click', closeLightbox);
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !$('#lightbox').hidden) closeLightbox(); });

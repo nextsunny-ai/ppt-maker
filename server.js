@@ -1,6 +1,7 @@
 // Local backend for PPT MAKER. Non-blocking: all heavy work runs in child processes.
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
@@ -9,6 +10,7 @@ const pexec = promisify(execFile);
 const DIR = __dirname;
 const PORT = 39217;
 const NODE = process.execPath;
+const THUMB_DIR = path.join(os.tmpdir(), 'pptmaker_preview');   // 미리보기 썸네일 임시 저장
 
 function send(res, code, body, type='application/json'){
   res.writeHead(code, {'Content-Type':type, 'Cache-Control':'no-store', 'Connection':'close'});
@@ -30,11 +32,50 @@ if ($r -eq [System.Windows.Forms.DialogResult]::OK) { $d.FileNames -join "\`n" }
   catch(e){ return []; }
 }
 
-async function embedFonts(list){
-  if(!list.length) return;
+function clearThumbs(){
+  try{
+    if(fs.existsSync(THUMB_DIR)){ for(const f of fs.readdirSync(THUMB_DIR)){ try{ fs.unlinkSync(path.join(THUMB_DIR,f)); }catch(e){} } }
+    else fs.mkdirSync(THUMB_DIR,{recursive:true});
+  }catch(e){}
+}
+// PowerPoint 한 세션에서: (옵션)폰트 임베드 + 각 슬라이드 PNG 썸네일 생성
+// 반환: [{file, n, w, h, thumbs:[절대경로...]}]
+async function finalize(list, embed){
+  if(!list.length) return [];
   const arr=list.map(p=>`'${p.replace(/'/g,"''")}'`).join(',');
-  const ps=`try{ $a=New-Object -ComObject PowerPoint.Application; foreach($f in @(${arr})){ try{ $p=$a.Presentations.Open($f,$false,$false,$false); $p.SaveAs($f,24,-1); $p.Close() }catch{} }; $a.Quit() }catch{}`;
-  try{ await pexec('powershell',['-NoProfile','-Command',ps],{maxBuffer:1<<20}); }catch(e){}
+  const td=THUMB_DIR.replace(/'/g,"''");
+  const emb=(embed!==false)?'$true':'$false';
+  const ps=`
+$ErrorActionPreference='SilentlyContinue'
+$files=@(${arr}); $td='${td}'; $embed=${emb}
+if(!(Test-Path $td)){ New-Item -ItemType Directory -Path $td -Force | Out-Null }
+$out=@()
+try{
+  $a=New-Object -ComObject PowerPoint.Application
+  for($fi=0; $fi -lt $files.Count; $fi++){
+    $f=$files[$fi]
+    try{
+      $p=$a.Presentations.Open($f,$false,$false,$false)
+      if($embed){ $p.SaveAs($f,24,-1) }
+      $w=$p.PageSetup.SlideWidth; $h=$p.PageSetup.SlideHeight
+      $tw=800; $th=[int][math]::Round($tw*$h/$w)
+      $thumbs=@()
+      for($si=1; $si -le $p.Slides.Count; $si++){
+        $png=Join-Path $td ("f{0}_s{1}.png" -f $fi,$si)
+        $p.Slides.Item($si).Export($png,'PNG',$tw,$th) | Out-Null
+        $thumbs+=$png
+      }
+      $out += [pscustomobject]@{ file=$f; n=$p.Slides.Count; w=[int]$w; h=[int]$h; thumbs=$thumbs }
+      $p.Close()
+    }catch{}
+  }
+  $a.Quit()
+}catch{}
+@{files=@($out)} | ConvertTo-Json -Depth 5 -Compress
+`;
+  try{ const {stdout}=await pexec('powershell',['-NoProfile','-Command',ps],{maxBuffer:1<<24});
+    const j=JSON.parse(stdout.trim()); return j.files||[]; }
+  catch(e){ return []; }
 }
 
 const MIME={'.html':'text/html;charset=utf-8','.css':'text/css','.js':'text/javascript','.svg':'image/svg+xml','.png':'image/png'};
@@ -49,6 +90,11 @@ const server = http.createServer(async (req,res)=>{
       return send(res,404,'not found','text/plain');
     }
     if(u.pathname==='/favicon.ico'){ res.writeHead(204); return res.end(); }
+    if(u.pathname==='/thumb'){
+      const p=path.normalize(u.searchParams.get('p')||'');
+      if(p.startsWith(THUMB_DIR) && fs.existsSync(p)) return send(res,200,fs.readFileSync(p),'image/png');
+      return send(res,404,'no','text/plain');
+    }
     if(u.pathname==='/ping'){ return send(res,200,{ok:true}); }
     if(u.pathname==='/pick'){ return send(res,200,{paths:await pickFiles()}); }
     if(u.pathname==='/analyze' && req.method==='POST'){
@@ -69,13 +115,17 @@ const server = http.createServer(async (req,res)=>{
     if(u.pathname==='/convert' && req.method==='POST'){
       const {paths,embed,orient}=await readBody(req);
       const or = (orient==='portrait'||orient==='세로') ? 'portrait' : 'landscape';
+      clearThumbs();
       const outputs=[];
       for(const hp of (paths||[])){
         try{ const out=hp.replace(/\.[^.]+$/,'')+'.pptx'; await pexec(NODE,[path.join(DIR,'html2pptx.js'),hp,out,or],{maxBuffer:1<<22}); if(fs.existsSync(out)) outputs.push(out); }
         catch(e){}
       }
-      if(embed!==false) await embedFonts(outputs);
-      return send(res,200,{outputs});
+      // 폰트 임베드 + 미리보기 썸네일 (PowerPoint 한 세션)
+      const fin = await finalize(outputs, embed);
+      const previews = fin.map(o=>({ out:o.file, n:o.n, portrait:(o.h>o.w),
+        thumbs:(o.thumbs||[]).map(t=>'/thumb?p='+encodeURIComponent(t)) }));
+      return send(res,200,{outputs, previews});
     }
     if(u.pathname==='/reveal' && req.method==='POST'){
       const {path:p}=await readBody(req);

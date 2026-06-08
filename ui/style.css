@@ -174,3 +174,18 @@ body{background:var(--bg);color:var(--ink-0);font-family:var(--ko);-webkit-font-
 @keyframes sp{to{transform:rotate(360deg)}}
 [hidden]{display:none!important}
 ::-webkit-scrollbar{width:10px}::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px;border:3px solid var(--bg)}
+
+/* ----- 미리보기 썸네일 + 라이트박스 ----- */
+.resultrow .rmeta{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-left:8px;flex:none}
+.thumbs{display:flex;flex-wrap:wrap;gap:8px;margin:8px 2px 16px}
+.thumb{position:relative;width:158px;height:89px;padding:0;border:1px solid var(--line);border-radius:8px;
+  overflow:hidden;cursor:zoom-in;background:var(--bg-2);transition:border-color .15s,transform .15s}
+.thumbs.port .thumb{width:90px;height:160px}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.thumb:hover{border-color:var(--accent);transform:translateY(-1px)}
+.thumb .tn{position:absolute;left:5px;bottom:4px;font-family:var(--mono);font-size:10px;line-height:1;
+  padding:2px 5px;border-radius:5px;background:rgba(0,0,0,.55);color:#fff}
+.lightbox{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:14px;background:rgba(8,7,6,.86);backdrop-filter:blur(4px);cursor:zoom-out}
+.lightbox img{max-width:88vw;max-height:82vh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5);border:1px solid var(--line-2)}
+.lb-cap{font-family:var(--mono);font-size:12px;color:var(--ink-1)}
