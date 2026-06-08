@@ -156,7 +156,15 @@ async function extractSlide(page, idx){
       const lhPt = isNaN(lhpx)? null : Math.round(lhpx*0.5*10)/10;   // HTML 줄높이를 절대값(pt)으로
       const hasBr=runs.some(r=>r.br);
       const maxPx=Math.max(...runs.filter(r=>!r.br).map(r=>(r.size||0)*2));
-      const singleLine = !hasBr && g.h < maxPx*lh*1.5;   // 원본이 한 줄이면 PPT도 한 줄 유지
+      // 실제 렌더링 줄 수로 판정 (박스 높이 X — overflow로 찌부러진 박스 오인 방지)
+      let nLines=1;
+      try{
+        const rg=document.createRange(); rg.selectNodeContents(blk);
+        const tops=[...rg.getClientRects()].filter(c=>c.width>0&&c.height>0).map(c=>c.top).sort((a,b)=>a-b);
+        if(tops.length){ let prev=tops[0]; const gap=Math.max(6,(lhpx||16)*0.5);
+          for(const t of tops){ if(t-prev>gap){ nLines++; prev=t; } } }
+      }catch(e){}
+      const singleLine = !hasBr && nLines<=1;   // 원본이 한 줄이면 PPT도 한 줄 유지
       ops.push({k:'text', order:idxOf(blk), g,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
         lh, lhPt, singleLine, runs});
