@@ -269,10 +269,12 @@ async function extractSlide(page, idx){
       let l=1e9,t=1e9,r=-1e9,bt=-1e9,ok=false;
       for(const n of nodes){ const rg=document.createRange(); rg.selectNodeContents(n);
         for(const c of rg.getClientRects()){ if(c.width<=0||c.height<=0) continue; ok=true; l=Math.min(l,c.left); t=Math.min(t,c.top); r=Math.max(r,c.right); bt=Math.max(bt,c.bottom); } }
+      const vAlign='top';
+      const fsBlk=parseFloat(cs.fontSize)||0;
       if(ok){
         const tx={x:(l-SR.left)/scale, y:(t-SR.top)/scale, w:(r-l)/scale, h:(bt-t)/scale};
-        if(hasBlockChild) g=tx;                          // 라벨+본문 혼합 → 텍스트 박스 전체로
-        else if(tx.h > g.h*1.5){ g={x:g.x, y:tx.y, w:g.w, h:tx.h}; }  // 찌부러진(overflow) 박스만 세로 보정 (표지 큰 제목 등 정상 박스는 그대로)
+        if(hasBlockChild) g=tx;                                       // 라벨+본문 혼합 → 텍스트 박스 전체로
+        else if(fsBlk<48 && tx.h > g.h*1.5){ g={x:g.x, y:tx.y, w:g.w, h:tx.h}; }  // 작은 본문의 찌부러진(overflow) 박스만 세로 보정 (큰 제목은 박스 그대로 = 원래 위치)
       }
       const runs=[];
       function walk(node){
@@ -320,8 +322,8 @@ async function extractSlide(page, idx){
       // (혼합콘텐츠로 이미 실제 텍스트 Range를 쓴 경우는 패딩 보정 생략)
       const pL=(parseFloat(cs.paddingLeft)||0)/scale, pT=(parseFloat(cs.paddingTop)||0)/scale,
             pR=(parseFloat(cs.paddingRight)||0)/scale, pB=(parseFloat(cs.paddingBottom)||0)/scale;
-      const gt = (!hasBlockChild && (pL||pT||pR||pB))? {x:g.x+pL, y:g.y+pT, w:Math.max(4,g.w-pL-pR), h:Math.max(4,g.h-pT-pB)} : g;
-      ops.push({k:'text', order:idxOf(blk), g:gt,
+      const gt = (!hasBlockChild && vAlign==='top' && (pL||pT||pR||pB))? {x:g.x+pL, y:g.y+pT, w:Math.max(4,g.w-pL-pR), h:Math.max(4,g.h-pT-pB)} : g;
+      ops.push({k:'text', order:idxOf(blk), g:gt, valign:vAlign,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
         lh, lhPt, singleLine, runs});
     });
@@ -426,7 +428,7 @@ async function extractSlide(page, idx){
       const maxSize=Math.max(...o.runs.filter(r=>!r.br).map(r=>r.size||0));
       const noWrap=maxSize>=40 || o.singleLine;
       const topt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN+0.12, h:o.g.h*IN,
-        align:o.align, valign:'top', margin:0, wrap:!noWrap, autoFit:false};
+        align:o.align, valign:(o.valign||'top'), margin:0, wrap:!noWrap, autoFit:false};
       // 다줄 '본문'만 HTML 줄높이(절대 pt)로 맞춤. 큰/혼합 크기 제목은 줄상자가 폰트보다 작아져 위로 넘치므로 제외
       if(!o.singleLine && o.lhPt && maxSize<=24) topt.lineSpacing=o.lhPt; else topt.lineSpacingMultiple=o.lh;
       slide.addText(arr, topt);
