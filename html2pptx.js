@@ -6,6 +6,35 @@ const puppeteer = require('puppeteer-core');
 const PptxGenJS = require('pptxgenjs');
 const path = require('path');
 const fs = require('fs');
+let JSZip=null; try{ JSZip=require('jszip'); }catch(e){ try{ JSZip=require('pptxgenjs/node_modules/jszip'); }catch(e2){} }
+
+// 저장된 .pptx 후처리: GRAD 마커 도형의 단색 채움을 PowerPoint 네이티브 그라데이션(gradFill)으로 변환
+async function fixGradients(file){
+  if(!JSZip) return;
+  let zip;
+  try{ zip=await JSZip.loadAsync(fs.readFileSync(file)); }catch(e){ return; }
+  const slides=Object.keys(zip.files).filter(n=>/^ppt\/slides\/slide\d+\.xml$/.test(n));
+  let changed=false;
+  for(const sn of slides){
+    let xml=await zip.file(sn).async('string');
+    if(xml.indexOf('name="GRAD|')<0) continue;
+    xml=xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (sp)=>{
+      const m=sp.match(/name="GRAD\|([01])\|([^"]*)"/);
+      if(!m) return sp;
+      const flip=m[1]==='1';
+      let stops=m[2].split(';').map(s=>{const p=s.split('@'); return {h:p[0], pos:parseInt(p[1],10), a:parseInt(p[2],10)};});
+      if(flip) stops=stops.slice().reverse().map(s=>({h:s.h, pos:100000-s.pos, a:s.a}));
+      stops.sort((a,b)=>a.pos-b.pos);
+      const gs=stops.map(s=>`<a:gs pos="${s.pos}"><a:srgbClr val="${s.h}"><a:alpha val="${s.a}"/></a:srgbClr></a:gs>`).join('');
+      const grad=`<a:gradFill rotWithShape="1"><a:gsLst>${gs}</a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>`;
+      let out=sp.replace(/<a:solidFill>[\s\S]*?<\/a:solidFill>/, grad);
+      out=out.replace(/(name=")GRAD\|[^"]*(")/, '$1Gradient$2');   // 마커 이름 정리
+      return out;
+    });
+    zip.file(sn, xml); changed=true;
+  }
+  if(changed){ try{ fs.writeFileSync(file, await zip.generateAsync({type:'nodebuffer'})); }catch(e){} }
+}
 
 // 이미지 파일의 자연 크기 읽기 (PNG/JPEG/GIF) — 배경이미지 비율 계산용
 function imgSize(file){
@@ -455,20 +484,22 @@ async function extractSlide(page, idx, opts){
       slide.addShape(pres.shapes.LINE, {x:o.x1*IN, y:o.y1*IN, w:(o.x2-o.x1)*IN, h:(o.y2-o.y1)*IN,
         line:{color:o.color, width:Math.max(0.25,o.w*PT), transparency:Math.round((1-o.a)*100)}});
     };
-    // 수직 선형 그라데이션 = 가로 띠(밴드) 여러 개로 근사 (위 투명→아래 어둠 등 정확히 재현)
+    // 수직 선형 그라데이션 = PowerPoint 네이티브 그라데이션 채움 1개 도형
+    // (pptxgenjs는 도형 그라데이션 미지원 → 마커 도형으로 넣고 저장 후 XML 후처리로 gradFill 변환. 후처리 실패해도 단색 반투명 1장으로 남음)
     const drawGrad=(o)=>{
-      const N=16, stops=o.stops;
-      const sampleAt=(t)=>{ let s0=stops[0], s1=stops[stops.length-1];
-        for(let k=0;k<stops.length-1;k++){ if(t>=stops[k].p && t<=stops[k+1].p){ s0=stops[k]; s1=stops[k+1]; break; } }
-        const span=(s1.p-s0.p)||1, f=Math.min(1,Math.max(0,(t-s0.p)/span));
-        return [0,1,2,3].map(i=>s0.c[i]+(s1.c[i]-s0.c[i])*f); };
       const hh=n=>('0'+Math.max(0,Math.min(255,Math.round(n))).toString(16)).slice(-2);
-      for(let k=0;k<N;k++){
-        const t0=k/N, tm=(k+0.5)/N, tt=o.flip?1-tm:tm;
-        const c=sampleAt(tt); if(c[3]<0.02) continue;
-        slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:(o.g.y+o.g.h*t0)*IN, w:o.g.w*IN, h:(o.g.h/N+0.4)*IN,
-          fill:{color:(hh(c[0])+hh(c[1])+hh(c[2])).toUpperCase(), transparency:Math.round((1-c[3])*100)}, line:{type:'none'}});
-      }
+      const enc=o.stops.map(s=>{
+        const h=(hh(s.c[0])+hh(s.c[1])+hh(s.c[2])).toUpperCase();
+        const pos=Math.round(Math.max(0,Math.min(1,s.p))*100000);
+        const al=Math.round(Math.max(0,Math.min(1,s.c[3]===undefined?1:s.c[3]))*100000);
+        return h+'@'+pos+'@'+al;
+      }).join(';');
+      // 후처리 실패 시 폴백용 단색: 가장 진한 스톱의 절반 투명도
+      const mid=o.stops.reduce((a,s)=>(s.c[3]||0)>(a.c[3]||0)?s:a, o.stops[0]);
+      const fhex=(hh(mid.c[0])+hh(mid.c[1])+hh(mid.c[2])).toUpperCase();
+      slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
+        fill:{color:fhex, transparency:Math.round((1-(mid.c[3]||1))*100*0.6+20)}, line:{type:'none'},
+        objectName:'GRAD|'+(o.flip?1:0)+'|'+enc});
     };
     // 배경·이미지·도형·선 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
     const nonText=data.ops.filter(o=>o.k!=='text').sort((a,b)=>(a.order||0)-(b.order||0));
@@ -548,5 +579,6 @@ async function extractSlide(page, idx, opts){
   }
   await browser.close();
   await pres.writeFile({fileName:OUT});
+  await fixGradients(OUT);                 // 그라데이션 마커 → 네이티브 gradFill (한 도형)
   console.log('PPT 생성 완료:', OUT);
 })().catch(e=>{ console.error('오류:', e.message); process.exit(1); });
