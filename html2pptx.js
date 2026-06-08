@@ -174,8 +174,9 @@ async function extractSlide(page, idx){
       const filt=cs.filter||'';
       const invert=/invert\(/.test(filt);
       const fm=filt.match(/brightness\(([\d.]+)\)/);
+      const sm=filt.match(/saturate\(([\d.]+)\)/);
       ops.push({k:'img', order:idxOf(img), src:img.getAttribute('src'), g, fit:cs.objectFit, op:parseFloat(cs.opacity),
-        bright: invert?1:(fm?parseFloat(fm[1]):1), invert});
+        bright: invert?1:(fm?parseFloat(fm[1]):1), invert, sat: sm?parseFloat(sm[1]):1});
     });
 
     // 커스텀 이미지 컴포넌트(<image-slot src>) + src 속성 가진 커스텀 요소도 이미지로 처리 (shadow DOM 안에 그려짐)
@@ -199,13 +200,21 @@ async function extractSlide(page, idx){
       if(g.h>0 && g.h<=4 && g.w>=8 && lineCol && lineCol.a>0.05){ ops.push({k:'line',order:ord,x1:g.x,y1:g.y+g.h/2,x2:g.x+g.w,y2:g.y+g.h/2,color:lineCol.hex,a:lineCol.a,w:Math.max(g.h,1)}); return; }
       if(g.w>0 && g.w<=4 && g.h>=8 && lineCol && lineCol.a>0.05){ ops.push({k:'line',order:ord,x1:g.x+g.w/2,y1:g.y,x2:g.x+g.w/2,y2:g.y+g.h,color:lineCol.hex,a:lineCol.a,w:Math.max(g.w,1)}); return; }
       if(g.w<4||g.h<4) return;
-      // bg 채움
-      if(bg && bg.a>0.02){ ops.push({k:'rect', order:ord, g, fill:{hex:bg.hex,a:bg.a}, line:null}); }
-      // 테두리: 면별로 선 추출 (한쪽만 있어도 잡음)
+      // border-radius (둥근 모서리) 측정
+      const rad=Math.min((parseFloat(cs.borderTopLeftRadius)||0)/scale, Math.min(g.w,g.h)/2);
       const W=s=>parseFloat(cs.getPropertyValue('border-'+s+'-width'))||0;
       const C=s=>col(cs.getPropertyValue('border-'+s+'-color'));
-      const sides=[['top',g.x,g.y,g.x+g.w,g.y],['bottom',g.x,g.y+g.h,g.x+g.w,g.y+g.h],['left',g.x,g.y,g.x,g.y+g.h],['right',g.x+g.w,g.y,g.x+g.w,g.y+g.h]];
-      for(const [s,x1,y1,x2,y2] of sides){ const w=W(s),c=C(s); if(w>0.4 && c && c.a>0.05) ops.push({k:'line',order:ord,x1,y1,x2,y2,color:c.hex,a:c.a,w}); }
+      const wT=W('top'),wB=W('bottom'),wL=W('left'),wR=W('right'); const cT=C('top');
+      const uniformBorder = wT>0.4 && Math.abs(wT-wB)<0.6 && Math.abs(wT-wL)<0.6 && Math.abs(wT-wR)<0.6 && cT && cT.a>0.05;
+      if(uniformBorder && rad>2){
+        // 둥근 테두리 박스 = 하나의 rounded rect (채움+외곽선)
+        ops.push({k:'rect', order:ord, g, fill:(bg&&bg.a>0.02?{hex:bg.hex,a:bg.a}:null), line:{hex:cT.hex,a:cT.a,w:wT}, rad});
+      } else {
+        if(bg && bg.a>0.02){ ops.push({k:'rect', order:ord, g, fill:{hex:bg.hex,a:bg.a}, line:null, rad:rad>2?rad:0}); }
+        // 테두리: 면별로 선 추출 (한쪽만 있어도 잡음)
+        const sides=[['top',g.x,g.y,g.x+g.w,g.y],['bottom',g.x,g.y+g.h,g.x+g.w,g.y+g.h],['left',g.x,g.y,g.x,g.y+g.h],['right',g.x+g.w,g.y,g.x+g.w,g.y+g.h]];
+        for(const [s,x1,y1,x2,y2] of sides){ const w=W(s),c=C(s); if(w>0.4 && c && c.a>0.05) ops.push({k:'line',order:ord,x1,y1,x2,y2,color:c.hex,a:c.a,w}); }
+      }
       const bi=cs.backgroundImage;
       // 래스터 배경이미지(url) → 이미지로 (헤더 로고 등 CSS background 처리)
       if(bi && bi!=='none' && !/gradient/.test(bi)){
@@ -371,6 +380,11 @@ async function extractSlide(page, idx){
           slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
             fill:{color:'000000', transparency:Math.round(o.bright*100)}, line:{type:'none'}});
         }
+        // saturate(<1) 필터는 PPT에서 적용 불가 → 페이지 배경색으로 (1-sat)만큼 옅게 덮어 탈채도 근사 (사진이 차분/화이트해짐)
+        if(o.sat!==undefined && o.sat<0.97){
+          slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
+            fill:{color:(data.bg||'F2EFE9'), transparency:Math.round(o.sat*100)}, line:{type:'none'}});
+        }
       }catch(e){}
     };
     const drawBgImg=(o)=>{
@@ -388,7 +402,11 @@ async function extractSlide(page, idx){
       const opt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN};
       if(o.fill) opt.fill={color:o.fill.hex, transparency:Math.round((1-o.fill.a)*100)}; else opt.fill={type:'none'};
       if(o.line) opt.line={color:o.line.hex, width:Math.max(0.25,o.line.w*PT), transparency:Math.round((1-o.line.a)*100)};
-      slide.addShape(pres.shapes.RECTANGLE, opt);
+      if(o.rad && o.rad>2){
+        const half=Math.min(o.g.w,o.g.h)/2;
+        opt.rectRadius=Math.min(o.rad, half)*IN;   // 둥근 모서리 (pill은 half로 캡)
+        slide.addShape(pres.shapes.ROUNDED_RECTANGLE, opt);
+      } else slide.addShape(pres.shapes.RECTANGLE, opt);
     };
     const drawLine=(o)=>{
       slide.addShape(pres.shapes.LINE, {x:o.x1*IN, y:o.y1*IN, w:(o.x2-o.x1)*IN, h:(o.y2-o.y1)*IN,
@@ -425,11 +443,14 @@ async function extractSlide(page, idx){
         arr.push({text:t, options:op});
       });
       if(!arr.length) continue;
-      const maxSize=Math.max(...o.runs.filter(r=>!r.br).map(r=>r.size||0));
+      const rsizes=o.runs.filter(r=>!r.br).map(r=>r.size||0);
+      const maxSize=Math.max(...rsizes);
+      const minSize=Math.min(...rsizes.filter(s=>s>0));
+      const uniformSize = minSize>0 && maxSize/minSize < 1.8;   // 한 줄 안 크기 편차 작음(혼합 거대 인라인 아님)
       const noWrap=maxSize>=40 || o.singleLine;
       const topt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN+0.12, h:o.g.h*IN,
         align:o.align, valign:(o.valign||'top'), margin:0, wrap:!noWrap, autoFit:false};
-      // 다줄 '본문'만 HTML 줄높이(절대 pt)로 맞춤. 큰/혼합 크기 제목은 줄상자가 폰트보다 작아져 위로 넘치므로 제외
+      // 줄간격: 다줄 '본문'만 절대 pt(정확). 제목은 배수(첫 줄 위치 보존 — 줄간격 줄이면 제목 첫 줄이 위로 끌려 라벨과 겹침)
       if(!o.singleLine && o.lhPt && maxSize<=24) topt.lineSpacing=o.lhPt; else topt.lineSpacingMultiple=o.lh;
       slide.addText(arr, topt);
     }
