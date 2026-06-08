@@ -287,12 +287,13 @@ async function extractSlide(page, idx){
       let l=1e9,t=1e9,r=-1e9,bt=-1e9,ok=false;
       for(const n of nodes){ const rg=document.createRange(); rg.selectNodeContents(n);
         for(const c of rg.getClientRects()){ if(c.width<=0||c.height<=0) continue; ok=true; l=Math.min(l,c.left); t=Math.min(t,c.top); r=Math.max(r,c.right); bt=Math.max(bt,c.bottom); } }
-      const vAlign='top';
+      let vAlign='top';
       const fsBlk=parseFloat(cs.fontSize)||0;
+      let txRect=null;
       if(ok){
-        const tx={x:(l-SR.left)/scale, y:(t-SR.top)/scale, w:(r-l)/scale, h:(bt-t)/scale};
-        if(hasBlockChild) g=tx;                                       // 라벨+본문 혼합 → 텍스트 박스 전체로
-        else if(fsBlk<48 && tx.h > g.h*1.5){ g={x:g.x, y:tx.y, w:g.w, h:tx.h}; }  // 작은 본문의 찌부러진(overflow) 박스만 세로 보정 (큰 제목은 박스 그대로 = 원래 위치)
+        txRect={x:(l-SR.left)/scale, y:(t-SR.top)/scale, w:(r-l)/scale, h:(bt-t)/scale};
+        if(hasBlockChild) g=txRect;                                   // 라벨+본문 혼합 → 텍스트 박스 전체로
+        else if(fsBlk<48 && txRect.h > g.h*1.5){ g={x:g.x, y:txRect.y, w:g.w, h:txRect.h}; }  // 작은 본문의 찌부러진(overflow) 박스만 세로 보정
       }
       const runs=[];
       function walk(node){
@@ -336,6 +337,8 @@ async function extractSlide(page, idx){
           for(const t of tops){ if(t-prev>gap){ nLines++; prev=t; } } }
       }catch(e){}
       const singleLine = !hasBr && nLines<=1;   // 원본이 한 줄이면 PPT도 한 줄 유지
+      // 큰 제목이 줄바꿈으로 감긴(wrapped, br 없음) 다줄 = 실제 글자 박스 + 세로 중앙정렬 → PowerPoint 행간 차이로 처지는 것 교정 (br로 나뉜 제목은 박스 그대로 두어 회귀 방지)
+      if(txRect && fsBlk>=48 && nLines>1 && !hasBr && !hasBlockChild){ g={x:g.x, y:txRect.y, w:g.w, h:txRect.h}; vAlign='middle'; }
       // 패딩 보정: 테두리박스가 아닌 콘텐츠박스에서 텍스트 시작 (헤더 로고 자리 padding-left 등)
       // (혼합콘텐츠로 이미 실제 텍스트 Range를 쓴 경우는 패딩 보정 생략)
       const pL=(parseFloat(cs.paddingLeft)||0)/scale, pT=(parseFloat(cs.paddingTop)||0)/scale,
