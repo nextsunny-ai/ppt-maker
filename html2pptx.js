@@ -421,7 +421,12 @@ async function extractSlide(page, idx, opts){
     });
 
     let secBg = col(getComputedStyle(sec).backgroundColor);
-    if((!secBg||secBg.a<0.02) && opts.mode==='doc'){ const hb=col(getComputedStyle(document.documentElement).backgroundColor); if(hb&&hb.a>0.02) secBg=hb; }
+    if(!secBg || secBg.a<0.02){
+      // 섹션이 투명하면 조상(부모…body…html) 배경색으로 폴백 — 다크 배경을 body에 준 덱에서 흰 슬라이드+밝은 글자가 안 보이던 문제
+      let el=sec.parentElement;
+      while(el){ const b=col(getComputedStyle(el).backgroundColor); if(b && b.a>0.02){ secBg=b; break; } el=el.parentElement; }
+      if(!secBg || secBg.a<0.02){ const hb=col(getComputedStyle(document.documentElement).backgroundColor); if(hb && hb.a>0.02) secBg=hb; }
+    }
     return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale};
   }, idx, opts);
 }
