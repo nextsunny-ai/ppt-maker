@@ -132,6 +132,38 @@ async function extractSlide(page, idx){
       const h=n=>('0'+Math.max(0,Math.min(255,Math.round(n))).toString(16)).slice(-2);
       return {hex:(h(cr[0])+h(cr[1])+h(cr[2])).toUpperCase(), a:ca};
     };
+    // 선형 그라데이션 파싱 → {angle, stops:[{c:[r,g,b,a],p}]}
+    const parseLinearGrad=(s)=>{
+      const m=s.match(/linear-gradient\((.*)\)\s*$/);
+      if(!m) return null;
+      const parts=splitTop(m[1]); let angle=180, i=0;
+      const first=(parts[0]||'').trim();
+      if(/deg\s*$/.test(first)){ angle=parseFloat(first); i=1; }
+      else if(/^to\s/i.test(first)){ angle=/bottom/i.test(first)?180:/top/i.test(first)?0:/right/i.test(first)?90:270; i=1; }
+      const stops=[];
+      for(;i<parts.length;i++){
+        const cstr=(parts[i].match(/rgba?\([^)]+\)/)||[])[0];
+        if(!cstr) continue;
+        const c=col(cstr); if(!c) continue;
+        const pm=parts[i].match(/([\d.]+)%/);
+        stops.push({c:[parseInt(c.hex.slice(0,2),16),parseInt(c.hex.slice(2,4),16),parseInt(c.hex.slice(4,6),16),c.a], p:pm?parseFloat(pm[1])/100:null});
+      }
+      if(!stops.length) return null;
+      if(stops[0].p==null) stops[0].p=0; if(stops[stops.length-1].p==null) stops[stops.length-1].p=1;
+      for(let k=1;k<stops.length-1;k++){ if(stops[k].p==null){ let a=k-1; while(stops[a].p==null)a--; let b=k+1; while(b<stops.length&&stops[b].p==null)b++; stops[k].p=stops[a].p+((stops[b].p-stops[a].p)*(k-a)/(b-a)); } }
+      return {angle, stops};
+    };
+    // 그라데이션 → op: 단일 수직 선형이면 밴드(grad), 그 외엔 평면 합성(rect)
+    const makeGradOp=(bi,g,order)=>{
+      const layers=splitTop(bi).filter(s=>/gradient/.test(s));
+      if(layers.length===1 && /linear-gradient/.test(layers[0])){
+        const lg=parseLinearGrad(layers[0]);
+        if(lg && lg.stops.length>=2){ const a=((lg.angle%360)+360)%360;
+          if(Math.abs(a-180)<=8 || a<=8 || Math.abs(a-360)<=8) return {k:'grad',order,g,flip:(a<=8||Math.abs(a-360)<=8),stops:lg.stops};
+        }
+      }
+      const cc=gradComposite(bi); return cc? {k:'rect',order,g,fill:cc,line:null} : null;
+    };
     const ops=[];
     const allEls=[...sec.querySelectorAll('*')];      // DOM(=paint) 순서
     const idxOf=(el)=>{ const i=allEls.indexOf(el); return i<0?9999:i; };
@@ -161,9 +193,11 @@ async function extractSlide(page, idx){
       const g=rel(el);
       const bg=col(cs.backgroundColor);
       const ord=idxOf(el);
-      // 얇은 선/바 (bg로 그린 divider) → 선으로
-      if(g.h>0 && g.h<=4 && g.w>=8 && bg && bg.a>0.05){ ops.push({k:'line',order:ord,x1:g.x,y1:g.y+g.h/2,x2:g.x+g.w,y2:g.y+g.h/2,color:bg.hex,a:bg.a,w:Math.max(g.h,1)}); return; }
-      if(g.w>0 && g.w<=4 && g.h>=8 && bg && bg.a>0.05){ ops.push({k:'line',order:ord,x1:g.x+g.w/2,y1:g.y,x2:g.x+g.w/2,y2:g.y+g.h,color:bg.hex,a:bg.a,w:Math.max(g.w,1)}); return; }
+      // 얇은 선/바 (bg색 또는 그라데이션으로 그린 divider) → 선으로
+      const biEl=cs.backgroundImage;
+      const lineCol = (bg && bg.a>0.05) ? bg : ((biEl && biEl!=='none' && /gradient/.test(biEl)) ? gradComposite(biEl) : null);
+      if(g.h>0 && g.h<=4 && g.w>=8 && lineCol && lineCol.a>0.05){ ops.push({k:'line',order:ord,x1:g.x,y1:g.y+g.h/2,x2:g.x+g.w,y2:g.y+g.h/2,color:lineCol.hex,a:lineCol.a,w:Math.max(g.h,1)}); return; }
+      if(g.w>0 && g.w<=4 && g.h>=8 && lineCol && lineCol.a>0.05){ ops.push({k:'line',order:ord,x1:g.x+g.w/2,y1:g.y,x2:g.x+g.w/2,y2:g.y+g.h,color:lineCol.hex,a:lineCol.a,w:Math.max(g.w,1)}); return; }
       if(g.w<4||g.h<4) return;
       // bg 채움
       if(bg && bg.a>0.02){ ops.push({k:'rect', order:ord, g, fill:{hex:bg.hex,a:bg.a}, line:null}); }
@@ -183,7 +217,7 @@ async function extractSlide(page, idx){
         }
       }
       if(bi && bi!=='none' && /gradient/.test(bi) && g.w>800 && g.h>500){
-        const cc=gradComposite(bi); if(cc) ops.push({k:'rect', order:ord, g, fill:cc, line:null});
+        const go=makeGradOp(bi, g, ord); if(go) ops.push(go);
       }
       // 절대배치 가상요소(::before/::after) 배경 = 오버레이·구분선·악센트 바
       for(const pe of ['::before','::after']){
@@ -207,11 +241,13 @@ async function extractSlide(page, idx){
         if(gp.w<1||gp.h<1) continue;
         let mx=ord; el.querySelectorAll('*').forEach(d=>{const i=idxOf(d); if(i>mx)mx=i;});
         const ordP = pe==='::after'? mx+0.5 : ord-0.5;
-        const cc = (pbg&&pbg.a>0.03)? pbg : gradComposite(pbi);
-        if(!cc) continue;
-        if(gp.h>0&&gp.h<=4&&gp.w>=8){ ops.push({k:'line',order:ordP,x1:gp.x,y1:gp.y+gp.h/2,x2:gp.x+gp.w,y2:gp.y+gp.h/2,color:cc.hex,a:cc.a,w:Math.max(gp.h,1)}); continue; }
-        if(gp.w>0&&gp.w<=4&&gp.h>=8){ ops.push({k:'line',order:ordP,x1:gp.x+gp.w/2,y1:gp.y,x2:gp.x+gp.w/2,y2:gp.y+gp.h,color:cc.hex,a:cc.a,w:Math.max(gp.w,1)}); continue; }
-        ops.push({k:'rect',order:ordP,g:gp,fill:cc,line:null});
+        if(pbg && pbg.a>0.03){
+          if(gp.h>0&&gp.h<=4&&gp.w>=8){ ops.push({k:'line',order:ordP,x1:gp.x,y1:gp.y+gp.h/2,x2:gp.x+gp.w,y2:gp.y+gp.h/2,color:pbg.hex,a:pbg.a,w:Math.max(gp.h,1)}); continue; }
+          if(gp.w>0&&gp.w<=4&&gp.h>=8){ ops.push({k:'line',order:ordP,x1:gp.x+gp.w/2,y1:gp.y,x2:gp.x+gp.w/2,y2:gp.y+gp.h,color:pbg.hex,a:pbg.a,w:Math.max(gp.w,1)}); continue; }
+          ops.push({k:'rect',order:ordP,g:gp,fill:pbg,line:null});
+        } else if(hasGrad){
+          const go=makeGradOp(pbi, gp, ordP); if(go) ops.push(go);
+        }
       }
     });
 
@@ -227,7 +263,17 @@ async function extractSlide(page, idx){
     }
     groups.forEach((nodes, blk)=>{
       const cs=getComputedStyle(blk);
-      const g=rel(blk); if(g.w<4||g.h<4) return;
+      let g=rel(blk); if(g.w<4||g.h<4) return;
+      const hasBlockChild=[...blk.children].some(c=>isBlockEl(c));
+      // 실제 텍스트(Range) 위치 측정 — 찌부러진 박스(overflow)·혼합콘텐츠에서 박스 top이 실제 글자 위치와 다름
+      let l=1e9,t=1e9,r=-1e9,bt=-1e9,ok=false;
+      for(const n of nodes){ const rg=document.createRange(); rg.selectNodeContents(n);
+        for(const c of rg.getClientRects()){ if(c.width<=0||c.height<=0) continue; ok=true; l=Math.min(l,c.left); t=Math.min(t,c.top); r=Math.max(r,c.right); bt=Math.max(bt,c.bottom); } }
+      if(ok){
+        const tx={x:(l-SR.left)/scale, y:(t-SR.top)/scale, w:(r-l)/scale, h:(bt-t)/scale};
+        if(hasBlockChild) g=tx;                          // 라벨+본문 혼합 → 텍스트 박스 전체로
+        else if(tx.h > g.h*1.5){ g={x:g.x, y:tx.y, w:g.w, h:tx.h}; }  // 찌부러진(overflow) 박스만 세로 보정 (표지 큰 제목 등 정상 박스는 그대로)
+      }
       const runs=[];
       function walk(node){
         node.childNodes.forEach(ch=>{
@@ -271,9 +317,10 @@ async function extractSlide(page, idx){
       }catch(e){}
       const singleLine = !hasBr && nLines<=1;   // 원본이 한 줄이면 PPT도 한 줄 유지
       // 패딩 보정: 테두리박스가 아닌 콘텐츠박스에서 텍스트 시작 (헤더 로고 자리 padding-left 등)
+      // (혼합콘텐츠로 이미 실제 텍스트 Range를 쓴 경우는 패딩 보정 생략)
       const pL=(parseFloat(cs.paddingLeft)||0)/scale, pT=(parseFloat(cs.paddingTop)||0)/scale,
             pR=(parseFloat(cs.paddingRight)||0)/scale, pB=(parseFloat(cs.paddingBottom)||0)/scale;
-      const gt = (pL||pT||pR||pB)? {x:g.x+pL, y:g.y+pT, w:Math.max(4,g.w-pL-pR), h:Math.max(4,g.h-pT-pB)} : g;
+      const gt = (!hasBlockChild && (pL||pT||pR||pB))? {x:g.x+pL, y:g.y+pT, w:Math.max(4,g.w-pL-pR), h:Math.max(4,g.h-pT-pB)} : g;
       ops.push({k:'text', order:idxOf(blk), g:gt,
         align: cs.textAlign==='center'?'center':(cs.textAlign==='right'?'right':'left'),
         lh, lhPt, singleLine, runs});
@@ -345,9 +392,24 @@ async function extractSlide(page, idx){
       slide.addShape(pres.shapes.LINE, {x:o.x1*IN, y:o.y1*IN, w:(o.x2-o.x1)*IN, h:(o.y2-o.y1)*IN,
         line:{color:o.color, width:Math.max(0.25,o.w*PT), transparency:Math.round((1-o.a)*100)}});
     };
+    // 수직 선형 그라데이션 = 가로 띠(밴드) 여러 개로 근사 (위 투명→아래 어둠 등 정확히 재현)
+    const drawGrad=(o)=>{
+      const N=16, stops=o.stops;
+      const sampleAt=(t)=>{ let s0=stops[0], s1=stops[stops.length-1];
+        for(let k=0;k<stops.length-1;k++){ if(t>=stops[k].p && t<=stops[k+1].p){ s0=stops[k]; s1=stops[k+1]; break; } }
+        const span=(s1.p-s0.p)||1, f=Math.min(1,Math.max(0,(t-s0.p)/span));
+        return [0,1,2,3].map(i=>s0.c[i]+(s1.c[i]-s0.c[i])*f); };
+      const hh=n=>('0'+Math.max(0,Math.min(255,Math.round(n))).toString(16)).slice(-2);
+      for(let k=0;k<N;k++){
+        const t0=k/N, tm=(k+0.5)/N, tt=o.flip?1-tm:tm;
+        const c=sampleAt(tt); if(c[3]<0.02) continue;
+        slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:(o.g.y+o.g.h*t0)*IN, w:o.g.w*IN, h:(o.g.h/N+0.4)*IN,
+          fill:{color:(hh(c[0])+hh(c[1])+hh(c[2])).toUpperCase(), transparency:Math.round((1-c[3])*100)}, line:{type:'none'}});
+      }
+    };
     // 배경·이미지·도형·선 = DOM(쌓임) 순서대로. 텍스트는 항상 그 위.
     const nonText=data.ops.filter(o=>o.k!=='text').sort((a,b)=>(a.order||0)-(b.order||0));
-    for(const o of nonText){ if(o.k==='img') drawImg(o); else if(o.k==='bgimg') drawBgImg(o); else if(o.k==='line') drawLine(o); else drawRect(o); }
+    for(const o of nonText){ if(o.k==='img') drawImg(o); else if(o.k==='bgimg') drawBgImg(o); else if(o.k==='line') drawLine(o); else if(o.k==='grad') drawGrad(o); else drawRect(o); }
     const texts=data.ops.filter(o=>o.k==='text').sort((a,b)=>(a.order||0)-(b.order||0));
     for(const o of texts){
       const arr=[];
@@ -363,8 +425,11 @@ async function extractSlide(page, idx){
       if(!arr.length) continue;
       const maxSize=Math.max(...o.runs.filter(r=>!r.br).map(r=>r.size||0));
       const noWrap=maxSize>=40 || o.singleLine;
-      slide.addText(arr, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN+0.12, h:o.g.h*IN,
-        align:o.align, valign:'top', margin:0, lineSpacingMultiple:o.lh, wrap:!noWrap, autoFit:false});
+      const topt={x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN+0.12, h:o.g.h*IN,
+        align:o.align, valign:'top', margin:0, wrap:!noWrap, autoFit:false};
+      // 다줄 '본문'만 HTML 줄높이(절대 pt)로 맞춤. 큰/혼합 크기 제목은 줄상자가 폰트보다 작아져 위로 넘치므로 제외
+      if(!o.singleLine && o.lhPt && maxSize<=24) topt.lineSpacing=o.lhPt; else topt.lineSpacingMultiple=o.lh;
+      slide.addText(arr, topt);
     }
     console.log('  슬라이드',i,'완료');
   }
