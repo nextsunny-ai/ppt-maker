@@ -313,11 +313,17 @@ async function extractSlide(page, idx, opts){
             const t=ch.textContent.replace(/\s+/g,' ');
             if(!t.trim() && t!==' ') return;
             const es=getComputedStyle(ch.parentElement);
-            const c=col(es.color)||{hex:'FAF8F4',a:1};
             const tsw=parseFloat(es.getPropertyValue('-webkit-text-stroke-width'))||0;
             const tsc=col(es.getPropertyValue('-webkit-text-stroke-color'));
             const fillCol=col(es.getPropertyValue('-webkit-text-fill-color'));
             const hollow = tsw>0 && (!fillCol || fillCol.a<0.05);
+            // 글자색: text-fill-color 우선(없으면 color). 그라데이션 텍스트(background-clip:text + 투명 글자)면 배경 그라데이션 대표색 사용
+            let c = fillCol || col(es.color);
+            if(!hollow && (!c || c.a<0.05)){
+              const clip=(es.getPropertyValue('-webkit-background-clip')||es.getPropertyValue('background-clip')||'');
+              if(/text/.test(clip)){ const gc=gradComposite(es.backgroundImage); if(gc && gc.a>0.05) c=gc; }
+            }
+            if(!c) c={hex:'FAF8F4',a:1};
             runs.push({text:t, fam:es.fontFamily, weight:parseInt(es.fontWeight)||400,
               size:Math.round(parseFloat(es.fontSize)*0.5*10)/10, italic:es.fontStyle==='italic',
               color:c.hex, alpha:c.a,
@@ -379,6 +385,14 @@ async function extractSlide(page, idx, opts){
   // deck-stage(버치형)일 때만 noscale+print로 펼침. 일반 덱은 화면(screen) 그대로 추출.
   const hasDeckStage = await page.evaluate(()=>{ const d=document.querySelector('deck-stage'); if(d){ d.setAttribute('noscale',''); return true; } return false; });
   if(hasDeckStage) await page.emulateMediaType('print');
+  // 등장 애니메이션(reveal) 덱 대응: 모든 슬라이드를 '활성+최종상태'로 강제 (opacity:0 등장요소가 비활성 슬라이드에서 투명하게 나오던 문제)
+  await page.evaluate(()=>{
+    const cls=['active','current','is-active','is-current','is-visible','visible','in-view','inview','show','shown','revealed','seen','animated','aos-animate'];
+    document.querySelectorAll('section, .slide, [class*="slide"], [class*="page"]').forEach(s=>cls.forEach(c=>s.classList.add(c)));
+    const st=document.createElement('style');
+    st.textContent='[class~="r"],[class~="r1"],[class~="r2"],[class~="r3"],[class*="reveal"],[class*="fade"],[class*="anim"],[data-reveal],[data-aos]{opacity:1!important;transform:none!important;filter:none!important;visibility:visible!important;clip-path:none!important}';
+    document.head.appendChild(st);
+  }).catch(()=>{});
   await new Promise(r=>setTimeout(r,1800));
 
   const N = await page.evaluate(()=>document.querySelectorAll('section').length);
@@ -387,13 +401,26 @@ async function extractSlide(page, idx, opts){
   const pres=new PptxGenJS();
 
   function renderSlide(slide, data){
+    // src → pptxgenjs용 {path} 또는 {data}. 실파일 없거나 잘못된 src(#앵커·빈값)면 null → 건너뜀
+    const resolveSrc=(srcRel)=>{
+      if(!srcRel) return null;
+      let s=srcRel; try{ s=decodeURIComponent(srcRel); }catch(e){}
+      if(/^data:/i.test(s)) return {data:s};
+      if(/^https?:/i.test(s)) return {path:s};
+      if(/^#/.test(s)) return null;                          // SVG 프래그먼트/앵커 — 이미지 아님
+      let f;
+      if(/^file:/i.test(s)) f=s.replace(/^file:\/+/i,'').replace(/\//g,'\\');
+      else f=path.join(path.dirname(HTML), s);
+      try{ return fs.existsSync(f) ? {path:f} : null; }catch(e){ return null; }
+    };
     const drawImg=(o)=>{
       try{
-        let srcRel=o.src;
-        if(o.invert && /logo-white/i.test(srcRel)) srcRel=srcRel.replace(/logo-white/i,'logo-black');
-        const src=srcRel.startsWith('http')? srcRel : path.join(path.dirname(HTML), srcRel);
-        slide.addImage({path:src, x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
-          sizing:{type:'cover', w:o.g.w*IN, h:o.g.h*IN}, transparency:o.op<1?Math.round((1-o.op)*100):0});
+        let r=null;
+        if(o.invert && /logo-white/i.test(o.src||'')) r=resolveSrc(o.src.replace(/logo-white/i,'logo-black'));
+        if(!r) r=resolveSrc(o.src);
+        if(!r) return;                                        // 실파일 없는/잘못된 이미지는 건너뜀
+        slide.addImage(Object.assign({}, r, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
+          sizing:{type:'cover', w:o.g.w*IN, h:o.g.h*IN}, transparency:o.op<1?Math.round((1-o.op)*100):0}));
         if(o.bright!==undefined && o.bright<0.99){
           slide.addShape(pres.shapes.RECTANGLE, {x:o.g.x*IN, y:o.g.y*IN, w:o.g.w*IN, h:o.g.h*IN,
             fill:{color:'000000', transparency:Math.round(o.bright*100)}, line:{type:'none'}});
@@ -407,10 +434,8 @@ async function extractSlide(page, idx, opts){
     };
     const drawBgImg=(o)=>{
       try{
-        let u=o.src, file;
-        if(/^file:/i.test(u)) file=decodeURIComponent(u.replace(/^file:\/+/i,'')).replace(/\//g,'\\');
-        else if(/^https?:/i.test(u)) file=u;
-        else file=path.join(path.dirname(HTML), u);
+        const r=resolveSrc(o.src); if(!r||!r.path) return;    // 배경은 자연크기 계산 필요 → 로컬/URL 파일만
+        const file=r.path;
         const nat=imgSize(file) || {w:o.area.w, h:o.area.h};
         const pl=resolveBg(o.area, nat, o.size, o.posx, o.posy);
         slide.addImage({path:file, x:pl.x*IN, y:pl.y*IN, w:pl.w*IN, h:pl.h*IN});
