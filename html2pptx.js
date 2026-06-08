@@ -69,6 +69,14 @@ async function extractSlide(page, idx){
         bright: invert?1:(fm?parseFloat(fm[1]):1), invert});
     });
 
+    // 커스텀 이미지 컴포넌트(<image-slot src>) + src 속성 가진 커스텀 요소도 이미지로 처리 (shadow DOM 안에 그려짐)
+    sec.querySelectorAll('image-slot[src], [data-img-src], picture').forEach(el=>{
+      if(el.tagName==='PICTURE'){ if(el.querySelector('img')) return; }
+      const src=el.getAttribute('src')||el.getAttribute('data-img-src'); if(!src) return;
+      const g=rel(el); if(g.w<3||g.h<3) return;
+      ops.push({k:'img', order:idxOf(el), src, g, fit:(el.getAttribute('fit')||'cover'), op:1, bright:1, invert:false});
+    });
+
     sec.querySelectorAll('*').forEach(el=>{
       if(el.tagName==='IMG'||el.tagName==='BR') return;
       const cs=getComputedStyle(el);
