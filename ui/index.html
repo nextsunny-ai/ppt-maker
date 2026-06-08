@@ -60,6 +60,10 @@
       </div>
 
       <div class="optbar" id="optbar" hidden>
+        <div class="seg" id="orientSeg" title="문서형(슬라이드 아닌 긴 페이지) HTML을 자를 방향입니다. 일반 슬라이드 덱은 자동으로 맞춰집니다.">
+          <button data-o="landscape" class="active">가로</button>
+          <button data-o="portrait">세로</button>
+        </div>
         <label class="chk"><input type="checkbox" id="embedChk" checked><span class="box"></span>폰트 임베드 (다른 PC 호환)</label>
         <button class="cta" id="convertBtn">PPT로 변환</button>
       </div>
@@ -99,7 +103,7 @@
           <label class="chk"><input type="checkbox" id="embedDefault" checked><span class="box"></span></label></div>
         <div class="setrow"><div><div class="sk">저장 위치</div><div class="sd">원본 HTML과 같은 폴더에 같은 이름(.pptx)으로 저장</div></div>
           <span class="pillv">자동</span></div>
-        <div class="setrow"><div><div class="sk">슬라이드 크기</div><div class="sd">16:9 · 1920×1080 기준</div></div><span class="pillv">고정</span></div>
+        <div class="setrow"><div><div class="sk">슬라이드 크기</div><div class="sd">슬라이드 덱은 16:9 · 1920×1080 / 문서형은 변환 시 가로·세로 선택</div></div><span class="pillv">자동</span></div>
       </div>
     </section>
 

@@ -63,6 +63,7 @@ function findChrome(){
 const HTML = process.argv[2];
 if(!HTML){ console.error('Usage: node html2pptx.js <input.html> [output.pptx]'); process.exit(1); }
 const OUT = process.argv[3] || path.join(path.dirname(HTML), path.basename(HTML).replace(/\.[^.]+$/,'') + '.pptx');
+const ORIENT = /portrait|세로/i.test(process.argv[4]||'') ? 'portrait' : 'landscape';   // 문서 모드 슬라이스 방향 (덱 모드엔 영향 없음)
 const CHROME = findChrome();
 if(!CHROME){ console.error('Chrome/Edge를 찾을 수 없습니다. Chrome을 설치하거나 CHROME_PATH 환경변수를 설정하세요.'); process.exit(1); }
 
@@ -80,13 +81,15 @@ function pptFont(fam, w, italic){
   return pick('Inter',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
 }
 
-async function extractSlide(page, idx){
-  return await page.evaluate((idx) => {
-    const secs=[...document.querySelectorAll('section')];
-    const sec = secs[idx-1];
+async function extractSlide(page, idx, opts){
+  return await page.evaluate((idx, opts) => {
+    opts = opts || {};
+    let sec;
+    if(opts.mode==='doc'){ sec = document.body; }
+    else { const secs=[...document.querySelectorAll('section')]; sec = secs[idx-1]; }
     if(!sec) return null;
     const SR = sec.getBoundingClientRect();
-    const scale = SR.width/1920;
+    const scale = opts.mode==='doc' ? 1 : SR.width/1920;
     const rel = (el)=>{const r=el.getBoundingClientRect();return{x:(r.left-SR.left)/scale,y:(r.top-SR.top)/scale,w:r.width/scale,h:r.height/scale};};
     const _ccv=document.createElement('canvas'); _ccv.width=_ccv.height=1; const _ccx=_ccv.getContext('2d',{willReadFrequently:true});
     function col(c){
@@ -357,9 +360,10 @@ async function extractSlide(page, idx){
         lh, lhPt, singleLine, runs});
     });
 
-    const secBg = col(getComputedStyle(sec).backgroundColor);
-    return {bg: secBg? secBg.hex : null, ops};
-  }, idx);
+    let secBg = col(getComputedStyle(sec).backgroundColor);
+    if((!secBg||secBg.a<0.02) && opts.mode==='doc'){ const hb=col(getComputedStyle(document.documentElement).backgroundColor); if(hb&&hb.a>0.02) secBg=hb; }
+    return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale};
+  }, idx, opts);
 }
 
 (async ()=>{
@@ -381,14 +385,8 @@ async function extractSlide(page, idx){
   console.log('슬라이드 수:', N);
 
   const pres=new PptxGenJS();
-  pres.defineLayout({name:'D', width:13.333, height:7.5});
-  pres.layout='D';
 
-  for(let i=1;i<=N;i++){
-    const data=await extractSlide(page, i);
-    const slide=pres.addSlide();
-    if(data && data.bg) slide.background={color:data.bg};
-    if(!data){ console.log('  슬라이드',i,'(빈 데이터)'); continue; }
+  function renderSlide(slide, data){
     const drawImg=(o)=>{
       try{
         let srcRel=o.src;
@@ -474,7 +472,54 @@ async function extractSlide(page, idx){
       if(!o.singleLine && o.lhPt && maxSize<=24) topt.lineSpacing=o.lhPt; else topt.lineSpacingMultiple=o.lh;
       slide.addText(arr, topt);
     }
-    console.log('  슬라이드',i,'완료');
+  }
+
+  if(N>=1){
+    // 덱 모드 (section 단위) — 기존 동작 그대로
+    pres.defineLayout({name:'D', width:13.333, height:7.5});
+    pres.layout='D';
+    for(let i=1;i<=N;i++){
+      const data=await extractSlide(page, i);
+      const slide=pres.addSlide();
+      if(data && data.bg) slide.background={color:data.bg};
+      if(!data){ console.log('  슬라이드',i,'(빈 데이터)'); continue; }
+      renderSlide(slide, data);
+      console.log('  슬라이드',i,'완료');
+    }
+  } else {
+    // 문서 모드 (section 없음) — 긴 페이지를 세로 길이로 잘라 편집가능 슬라이드로
+    const portrait = ORIENT==='portrait';
+    const RW = portrait?1080:1920, PAGE_H = portrait?1920:1080;
+    console.log('문서 모드(슬라이드 섹션 없음) — '+(portrait?'세로':'가로')+'형으로 슬라이스');
+    await page.setViewport({width:RW, height:PAGE_H, deviceScaleFactor:1});
+    await new Promise(r=>setTimeout(r,500));
+    try{ await page.evaluate(()=>Promise.all([...document.images].filter(i=>!i.complete).map(i=>new Promise(r=>{i.onload=i.onerror=r;setTimeout(r,3000);})))); }catch(e){}
+    const full = await extractSlide(page, 1, {mode:'doc', renderW:RW});
+    pres.defineLayout({name:'DOC', width:portrait?7.5:13.333, height:portrait?13.333:7.5});
+    pres.layout='DOC';
+    const opBottom=(o)=> o.k==='line'? Math.max(o.y1,o.y2) : (o.k==='bgimg'? o.area.y+o.area.h : (o.g? o.g.y+o.g.h : 0));
+    const anchorY=(o)=> o.k==='line'? Math.min(o.y1,o.y2) : (o.k==='bgimg'? o.area.y : (o.g? o.g.y : 0));
+    const shift=(o,dy)=>{ const n=Object.assign({},o);
+      if(o.k==='line'){ n.y1=o.y1+dy; n.y2=o.y2+dy; }
+      else if(o.k==='bgimg'){ n.area=Object.assign({},o.area,{y:o.area.y+dy}); }
+      else if(o.g){ n.g=Object.assign({},o.g,{y:o.g.y+dy}); }
+      return n; };
+    if(!full || !full.ops || !full.ops.length){
+      console.log('변환할 내용을 못 찾음 (빈 슬라이드 1장 생성)');
+      const s=pres.addSlide(); if(full&&full.bg) s.background={color:full.bg};
+    } else {
+      let H=full.height||0; for(const o of full.ops){ const b=opBottom(o); if(b>H)H=b; }
+      const nS=Math.max(1, Math.ceil(H/PAGE_H));
+      console.log('총 높이 '+Math.round(H)+'px → '+nS+'장');
+      for(let p=0;p<nS;p++){
+        const y0=p*PAGE_H, y1=y0+PAGE_H;
+        const ops=full.ops.filter(o=>{ const ay=anchorY(o); return ay>=y0 && ay<y1; }).map(o=>shift(o,-y0));
+        const slide=pres.addSlide();
+        if(full.bg) slide.background={color:full.bg};
+        renderSlide(slide, {bg:full.bg, ops});
+        console.log('  슬라이드',(p+1),'완료');
+      }
+    }
   }
   await browser.close();
   await pres.writeFile({fileName:OUT});

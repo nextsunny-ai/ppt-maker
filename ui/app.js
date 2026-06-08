@@ -5,7 +5,7 @@ const api = async (p, body) => {
   return (await fetch(p,o)).json();
 };
 const baseName = p => p.replace(/^.*[\\/]/,'');
-const state = { files:[], fonts:[] };
+const state = { files:[], fonts:[], orient:'landscape' };
 
 /* ---------- nav ---------- */
 function showView(v){
@@ -27,6 +27,9 @@ setTheme(localStorage.getItem('ppt_theme')||'dark');
 
 /* ---------- embed sync ---------- */
 $('#embedDefault').onchange=()=>{ $('#embedChk').checked=$('#embedDefault').checked; };
+
+/* ---------- orientation (문서형 슬라이스 방향) ---------- */
+$$('#orientSeg button').forEach(b=>b.onclick=()=>{ state.orient=b.dataset.o; $$('#orientSeg button').forEach(x=>x.classList.toggle('active',x===b)); });
 
 /* ---------- files ---------- */
 async function pick(){ const {paths}=await api('/pick'); addFiles(paths||[]); }
@@ -100,7 +103,7 @@ $('#convertBtn').onclick=async()=>{
   txt.textContent='슬라이드 렌더링 중… (12장 기준 15~25초)'; fill.style.width='15%';
   let pct=15; const tick=setInterval(()=>{pct=Math.min(pct+4,88);fill.style.width=pct+'%';},600);
   const embed=$('#embedChk').checked;
-  const {outputs=[]}=await api('/convert',{paths:state.files,embed});
+  const {outputs=[]}=await api('/convert',{paths:state.files,embed,orient:state.orient});
   clearInterval(tick); fill.style.width='100%'; txt.textContent=embed?'폰트 임베드 완료':'변환 완료';
   setTimeout(()=>{ $('#progress').hidden=true; showResults(outputs); btn.disabled=false; },500);
 };

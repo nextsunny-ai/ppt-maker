@@ -67,10 +67,11 @@ const server = http.createServer(async (req,res)=>{
       return send(res,200,{results});
     }
     if(u.pathname==='/convert' && req.method==='POST'){
-      const {paths,embed}=await readBody(req);
+      const {paths,embed,orient}=await readBody(req);
+      const or = (orient==='portrait'||orient==='세로') ? 'portrait' : 'landscape';
       const outputs=[];
       for(const hp of (paths||[])){
-        try{ await pexec(NODE,[path.join(DIR,'html2pptx.js'),hp],{maxBuffer:1<<22}); const out=hp.replace(/\.[^.]+$/,'')+'.pptx'; if(fs.existsSync(out)) outputs.push(out); }
+        try{ const out=hp.replace(/\.[^.]+$/,'')+'.pptx'; await pexec(NODE,[path.join(DIR,'html2pptx.js'),hp,out,or],{maxBuffer:1<<22}); if(fs.existsSync(out)) outputs.push(out); }
         catch(e){}
       }
       if(embed!==false) await embedFonts(outputs);
