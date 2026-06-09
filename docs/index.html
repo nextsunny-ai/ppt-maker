@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPT 메이커 — HTML을 편집가능 PPT로</title>
+<style>
+:root{ --bg:#28282C; --bg2:#312F35; --ink:#faf8f4; --ink2:rgba(232,228,220,.62); --ink3:rgba(232,228,220,.38);
+  --line:rgba(232,228,220,.14); --accent:#a696e0; --accent2:#C8A165; --r:14px;
+  --ko:'Pretendard','Malgun Gothic',sans-serif; }
+*{margin:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--ko);line-height:1.5;min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;padding:40px 20px}
+.wrap{width:100%;max-width:680px}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.dot{width:11px;height:11px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+.brand b{font-size:20px;letter-spacing:.04em}
+.tag{color:var(--ink3);font-size:12px;letter-spacing:.18em;font-family:monospace}
+h1{font-size:26px;margin:18px 0 6px;font-weight:800}
+h1 em{color:var(--accent);font-style:normal}
+.lede{color:var(--ink2);font-size:14px;margin-bottom:22px}
+.panel{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:22px}
+#drop{border:1.5px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;cursor:pointer;transition:.15s;background:rgba(255,255,255,.015)}
+#drop:hover,#drop.over{border-color:var(--accent);background:rgba(166,150,224,.07)}
+#drop .big{font-size:16px;font-weight:700;margin-bottom:6px}
+#drop .hint{color:var(--ink3);font-size:12.5px}
+.pickbtns{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.pickbtns label{font-size:12.5px;color:var(--ink2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+.pickbtns label:hover{border-color:var(--accent);color:var(--ink)}
+input[type=file]{display:none}
+#picked{margin-top:12px;font-size:12.5px;color:var(--accent2);text-align:center;word-break:break-all}
+.opt{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:none;border:0;color:var(--ink2);padding:7px 16px;cursor:pointer;font-family:var(--ko);font-size:13px}
+.seg button.on{background:var(--accent);color:#1a1620;font-weight:700}
+.cta{background:var(--accent);color:#1a1620;border:0;border-radius:9px;padding:11px 22px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--ko)}
+.cta:disabled{opacity:.4;cursor:default}
+#progress{margin-top:18px;color:var(--ink2);font-size:13px}
+#progress .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px}
+@keyframes sp{to{transform:rotate(360deg)}}
+#result{margin-top:18px}
+#dl{display:inline-block;background:var(--accent2);color:#1a1610;border-radius:9px;padding:11px 20px;font-weight:800;text-decoration:none;font-size:14px}
+#log{margin-top:10px;color:var(--ink2);font-size:13px}
+#fontnote{margin-top:14px;font-size:12.5px;color:var(--ink2);background:rgba(200,161,101,.1);border:1px solid rgba(200,161,101,.3);border-radius:9px;padding:12px 14px;line-height:1.6}
+#fontnote a{color:var(--accent2);font-weight:700}
+.facts{margin-top:26px;color:var(--ink3);font-size:12px;line-height:1.9}
+.facts b{color:var(--ink2)}
+.stage-wrap{position:fixed;left:-99999px;top:0;width:1920px;height:3000px;overflow:hidden}
+footer{margin-top:30px;color:var(--ink3);font-size:11.5px;text-align:center}
+footer a{color:var(--ink2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="dot"></span><b>PPT&nbsp;MAKER</b><span class="tag">[ HTML → PPTX ]</span></div>
+  <h1>HTML 슬라이드를 <em>편집 가능한</em> PPT로</h1>
+  <p class="lede">브라우저에서 바로 변환합니다. 설치·로그인·과금 없음. 파일은 PC 밖으로 나가지 않습니다.</p>
+
+  <div class="panel">
+    <div id="drop">
+      <div class="big">덱 폴더(또는 HTML + 이미지)를 끌어다 놓기</div>
+      <div class="hint">또는 아래 버튼으로 선택 · 이미지가 있으면 HTML과 같이 넣어주세요</div>
+      <div class="pickbtns">
+        <label>📁 폴더 선택<input type="file" id="folder" webkitdirectory directory multiple></label>
+        <label>📄 파일 선택(여러 개)<input type="file" id="filesinp" multiple></label>
+      </div>
+    </div>
+    <div id="picked"></div>
+
+    <div class="opt">
+      <div class="seg" id="orient" title="문서형(슬라이드 아닌 긴 페이지) HTML을 자를 방향. 일반 슬라이드 덱은 자동.">
+        <button data-o="landscape" class="on">가로</button>
+        <button data-o="portrait">세로</button>
+      </div>
+      <button class="cta" id="go" disabled>PPT로 변환</button>
+    </div>
+
+    <div id="progress" hidden><span class="spin"></span><span> 변환 중…</span></div>
+    <div id="log"></div>
+    <div id="result" hidden>
+      <a id="dl" href="#">다운로드</a>
+      <div id="fontnote" hidden>이 덱은 특수 폰트를 씁니다. 여는 PC에 그 폰트가 없으면 비슷한 대체 글꼴로 보일 수 있어요.
+        <br>폰트까지 <b>.pptx에 완벽히 포함</b>하려면 <a href="https://github.com/nextsunny-ai/ppt-maker" target="_blank">데스크탑 버전</a>을 쓰세요.</div>
+    </div>
+  </div>
+
+  <div class="facts">
+    <b>[ 됨 ]</b> 편집가능 텍스트 · 도형 · 이미지 · 그라데이션 · 배경 줌 애니메이션 · 문서형(세로 슬라이스)<br>
+    <b>[ 안 됨 ]</b> 폰트 .pptx 임베드(데스크탑 전용) · 게임/캔버스 등 JS 인터랙티브는 정지화면으로<br>
+    <b>[ 권장 ]</b> 변환 후 PowerPoint에서 마지막 손질
+  </div>
+  <footer>© 2026 Sunny Ryu · <a href="https://github.com/nextsunny-ai/ppt-maker" target="_blank">데스크탑 버전 · 소스</a></footer>
+</div>
+
+<div class="stage-wrap"><iframe id="stage" sandbox="allow-same-origin allow-scripts"></iframe></div>
+
+<script src="vendor/pptxgen.bundle.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
