@@ -7,7 +7,9 @@ window.__extractSlide = function(idx, opts){
     else { const secs=[...document.querySelectorAll('section')]; sec = secs[idx-1]; }
     if(!sec) return null;
     const SR = sec.getBoundingClientRect();
-    const scale = opts.mode==='doc' ? 1 : SR.width/1920;
+    const designW = SR.width || 1920;
+    const designH = SR.height || 1080;
+    const scale = 1;
     const rel = (el)=>{const r=el.getBoundingClientRect();return{x:(r.left-SR.left)/scale,y:(r.top-SR.top)/scale,w:r.width/scale,h:r.height/scale};};
     const _ccv=document.createElement('canvas'); _ccv.width=_ccv.height=1; const _ccx=_ccv.getContext('2d',{willReadFrequently:true});
     function col(c){
@@ -264,7 +266,7 @@ window.__extractSlide = function(idx, opts){
       while(el){ const b=col(getComputedStyle(el).backgroundColor); if(b && b.a>0.02){ secBg=b; break; } el=el.parentElement; }
       if(!secBg || secBg.a<0.02){ const hb=col(getComputedStyle(document.documentElement).backgroundColor); if(hb && hb.a>0.02) secBg=hb; }
     }
-    return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale};
+    return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale, slideW: designW, slideH: designH};
 };
 
 // 줌 감지 (활성화 강제 전) — data-ppt-zoom 태깅. 데스크탑 엔진과 동일 로직.

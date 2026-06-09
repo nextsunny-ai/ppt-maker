@@ -218,8 +218,11 @@ async function convert(){
     const pres_render=async()=>{};
 
     if(N>=1){
-      pres.defineLayout({name:'D', width:13.333, height:7.5}); pres.layout='D';
-      setLog(`슬라이드 ${N}장 변환 중…`);
+      // 슬라이드 크기 = 섹션 실제 렌더 크기 (가로/세로 자동)
+      const r0=win.document.querySelector('section').getBoundingClientRect();
+      const slW=(r0.width||1920)*IN, slH=(r0.height||1080)*IN;
+      pres.defineLayout({name:'D', width:Math.round(slW*1000)/1000, height:Math.round(slH*1000)/1000}); pres.layout='D';
+      setLog(`슬라이드 ${N}장 변환 중… (${slW>=slH?'가로':'세로'})`);
       for(let i=1;i<=N;i++){
         const data=win.__extractSlide(i,{});
         // bgimg 자연크기 채우기

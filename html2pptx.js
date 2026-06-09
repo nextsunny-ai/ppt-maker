@@ -160,7 +160,10 @@ async function extractSlide(page, idx, opts){
     else { const secs=[...document.querySelectorAll('section')]; sec = secs[idx-1]; }
     if(!sec) return null;
     const SR = sec.getBoundingClientRect();
-    const scale = opts.mode==='doc' ? 1 : SR.width/1920;
+    // 슬라이드 크기 = 섹션의 실제 렌더 크기(getBoundingClientRect). 가로 1920×1080·세로 880×1244 등 그대로. 좌표=실제 px(scale 1)
+    const designW = SR.width || 1920;
+    const designH = SR.height || 1080;
+    const scale = 1;
     const rel = (el)=>{const r=el.getBoundingClientRect();return{x:(r.left-SR.left)/scale,y:(r.top-SR.top)/scale,w:r.width/scale,h:r.height/scale};};
     const _ccv=document.createElement('canvas'); _ccv.width=_ccv.height=1; const _ccx=_ccv.getContext('2d',{willReadFrequently:true});
     function col(c){
@@ -446,7 +449,7 @@ async function extractSlide(page, idx, opts){
       while(el){ const b=col(getComputedStyle(el).backgroundColor); if(b && b.a>0.02){ secBg=b; break; } el=el.parentElement; }
       if(!secBg || secBg.a<0.02){ const hb=col(getComputedStyle(document.documentElement).backgroundColor); if(hb && hb.a>0.02) secBg=hb; }
     }
-    return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale};
+    return {bg: secBg? secBg.hex : null, ops, height: SR.height/scale, slideW: designW, slideH: designH};
   }, idx, opts);
 }
 
@@ -612,9 +615,12 @@ async function extractSlide(page, idx, opts){
   }
 
   if(N>=1){
-    // 덱 모드 (section 단위) — 기존 동작 그대로
-    pres.defineLayout({name:'D', width:13.333, height:7.5});
+    // 덱 모드 (section 단위) — 슬라이드 크기 = 섹션 실제 디자인 크기 (가로 1920×1080 / 세로 880×1244 등 그대로)
+    const dim = await page.evaluate(()=>{ const s=document.querySelector('section'); if(!s) return null; const r=s.getBoundingClientRect(); return {w:r.width, h:r.height}; });
+    const slW=(dim&&dim.w?dim.w:1920)*IN, slH=(dim&&dim.h?dim.h:1080)*IN;
+    pres.defineLayout({name:'D', width:Math.round(slW*1000)/1000, height:Math.round(slH*1000)/1000});
     pres.layout='D';
+    console.log('슬라이드 크기:', Math.round(slW*100)/100+'x'+Math.round(slH*100)/100+'in ('+(slW>=slH?'가로':'세로')+')');
     for(let i=1;i<=N;i++){
       const data=await extractSlide(page, i);
       const slide=pres.addSlide();
