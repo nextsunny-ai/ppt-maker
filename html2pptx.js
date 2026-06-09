@@ -127,13 +127,28 @@ function fileUrl(p){
   catch(e){ return 'file:///' + p.replace(/\\/g,'/').replace(/%/g,'%25').replace(/#/g,'%23').replace(/\?/g,'%3F').replace(/ /g,'%20'); }
 }
 
+// 폰트 스택에서 첫 '실제' 패밀리명 추출 (제네릭/시스템 폰트는 건너뜀)
+function firstFamily(fam){
+  for(let p of String(fam).split(',')){
+    p=p.trim().replace(/^["']|["']$/g,'');
+    if(!p) continue;
+    if(/^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-(serif|sans-serif|monospace|rounded)|inherit|initial|unset|-apple-system|BlinkMacSystemFont|Segoe UI|Apple SD|Malgun|Arial|Helvetica|sans|Roboto)$/i.test(p)) continue;
+    return p;
+  }
+  return '';
+}
+// 폰트 → {face, bold}. 튜닝된 폰트는 가중치를 이름에 반영(기존 유지), 그 외는 HTML 실제 폰트명 그대로(자동설치됨)+bold
 function pptFont(fam, w, italic){
   fam=fam||''; w=w||400;
-  const pick=(base,steps)=>{ let s=''; for(const [mw,suf] of steps){ if(w>=mw) s=suf; } return (base+s); };
+  const pick=(base,steps)=>{ let s=''; for(const [mw,suf] of steps){ if(w>=mw) s=suf; } return {face:base+s, bold:false}; };
   if(/Pretendard/i.test(fam)) return pick('Pretendard',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
   if(/JetBrains|Plex Mono|monospace/i.test(fam)) return pick('JetBrains Mono',[[0,''],[500,' Medium']]);
-  if(/Cormorant/i.test(fam)) return 'Cormorant Garamond Light'; // 설치된 정확한 패밀리(인용문=light weight)
+  if(/Cormorant/i.test(fam)) return {face:'Cormorant Garamond Light', bold:false};
   if(/Spectral/i.test(fam)) return pick('Spectral',[[0,' Light'],[400,''],[500,' Medium']]);
+  if(/(^|[",\s])Inter([",\s]|$)/i.test(fam)) return pick('Inter',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
+  // 그 외: HTML이 실제 쓴 폰트명 그대로 (변환 시 자동설치되어 PowerPoint에 존재). 가중치는 bold로
+  const real=firstFamily(fam);
+  if(real) return {face:real, bold:w>=600};
   return pick('Inter',[[0,''],[500,' Medium'],[600,' SemiBold'],[800,' ExtraBold'],[900,' Black']]);
 }
 
@@ -437,6 +452,14 @@ async function extractSlide(page, idx, opts){
 
 (async ()=>{
   console.log('변환 시작:', path.basename(HTML));
+  // 폰트 자동 감지·설치: HTML이 쓰는 폰트 중 미설치(다운로드 가능)면 설치 → 렌더 geometry·PPT 임베드 정확
+  try{
+    const fontkit=require('./fontkit');
+    const used=await fontkit.detectUsedFonts(HTML);
+    const missing=fontkit.analyzeFonts(used).filter(f=>!f.installed && f.downloadable);
+    for(const f of missing){ console.log('폰트 자동 설치:', f.name); try{ fontkit.installFont(f.name); }catch(e){} }
+    if(missing.length) console.log('폰트 설치 완료:', missing.length, '개');
+  }catch(e){ console.log('폰트 자동설치 건너뜀:', e.message); }
   const browser=await puppeteer.launch({executablePath:CHROME, headless:'new', args:['--no-sandbox','--force-device-scale-factor=1']});
   const page=await browser.newPage();
   await page.setViewport({width:1920,height:1080,deviceScaleFactor:1});
@@ -566,8 +589,10 @@ async function extractSlide(page, idx, opts){
       o.runs.forEach(r=>{
         if(r.br){ if(arr.length) arr[arr.length-1].options.breakLine=true; return; }
         let t=r.text; if(r.upper) t=t.toUpperCase();
-        const op={fontFace:pptFont(r.fam,r.weight,r.italic), fontSize:Math.max(4,r.size), italic:r.italic,
+        const _pf=pptFont(r.fam,r.weight,r.italic);
+        const op={fontFace:_pf.face, fontSize:Math.max(4,r.size), italic:r.italic,
           charSpacing:r.cs?Math.round(r.cs*10)/10:0};
+        if(_pf.bold) op.bold=true;
         if(r.outline){ op.outline={size:r.outline.w, color:r.outline.color}; op.color=(data.bg||'0E0D0B'); }
         else { op.color=r.color; op.transparency=r.alpha<1?Math.round((1-r.alpha)*100):0; }
         arr.push({text:t, options:op});

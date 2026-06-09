@@ -64,7 +64,8 @@ async function detectUsedFonts(htmlPath){
   try{
     const page=await browser.newPage();
     await page.setViewport({width:1920,height:1080});
-    await page.goto('file:///'+htmlPath.replace(/\\/g,'/'),{waitUntil:'networkidle0'});
+    let furl; try{ furl=require('url').pathToFileURL(htmlPath).href; }catch(e){ furl='file:///'+htmlPath.replace(/\\/g,'/').replace(/#/g,'%23'); }
+    await page.goto(furl,{waitUntil:'networkidle0'});
     await page.evaluate(()=>{const d=document.querySelector('deck-stage');if(d)d.setAttribute('noscale','');});
     await page.emulateMediaType('print');
     await new Promise(r=>setTimeout(r,800));
