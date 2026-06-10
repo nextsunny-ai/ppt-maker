@@ -32,7 +32,7 @@ HTML 슬라이드 덱(1920×1080)을 PowerPoint에서 직접 수정 가능한 PP
 
 [ 다른 회사와 공유 ]
 - AI/키/과금 없음 → 받는 쪽 비용 0
-- 받는 PC도 Node.js + Chrome 필요 (설치메모.txt 참고)
+- 받는 PC도 Node.js + Chrome 필요 (README.md 참고)
 - PowerPoint가 있으면 폰트가 자동 임베드되어 어디서나 동일하게 보임
 
 
@@ -45,4 +45,4 @@ HTML 슬라이드 덱(1920×1080)을 PowerPoint에서 직접 수정 가능한 PP
   ui/                     화면(디자인)
   node_modules/           라이브러리
 
-문제 생기면 테오(기술)에게.
+문제가 생기면 GitHub Issues(github.com/nextsunny-ai/ppt-maker)에 남겨주세요.
