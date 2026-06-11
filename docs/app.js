@@ -2,7 +2,7 @@
 const IN = 13.333/1920, PT = IN*72;
 const DESKTOP_URL = 'https://github.com/nextsunny-ai/ppt-maker';
 const $ = s=>document.querySelector(s);
-const state = { files:[], orient:'landscape' };
+const state = { files:[], orient:'landscape', htmlChoice:'' };
 
 /* ---------- 폰트 매핑 (데스크탑 pptFont와 동일) ---------- */
 function firstFamily(fam){
@@ -162,20 +162,37 @@ function imgNatural(dataURL){ return new Promise(res=>{ const im=new Image(); im
 function baseName(p){ return p.replace(/^.*[\\/]/,'').replace(/[?#].*$/,''); }
 
 async function buildAssets(files, htmlPath){
-  // 이미지/CSS/폰트 → dataURL. 키: 파일명(basename) + 상대경로 둘 다
-  const map={}, natMap={};
+  // 이미지/폰트 → dataURL, CSS → 텍스트. 키: 파일명(basename) + 상대경로 둘 다
+  const map={}, natMap={}, css={};
   for(const f of files){
     const rel=(f.webkitRelativePath||f.name);
     if(/\.html?$/i.test(f.name)) continue;
-    if(/\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(f.name)){
+    if(/\.(png|jpe?g|gif|webp|svg|avif|bmp|woff2?|ttf|otf|eot)$/i.test(f.name)){
       try{ const d=await readAsDataURL(f); map[baseName(rel)]=d; map[rel]=d; }catch(e){}
+    } else if(/\.css$/i.test(f.name)){
+      try{ const t=await readAsText(f); css[baseName(rel)]=t; css[rel]=t; }catch(e){}
     }
   }
-  return {map, natMap};
+  return {map, natMap, css};
 }
-function rewriteHtml(html, map){
+function rewriteCssUrls(cssText, map){
+  // CSS 내부 url(...) 로컬 경로(폰트·이미지)를 dataURL로 치환
+  return cssText.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi,(m,q,u)=>{ const v=u.trim().replace(/^["']|["']$/g,''); if(/^(data:|https?:|#)/i.test(v)) return m; const d=map[baseName(v)]||map[v]||null; return d?`url(${q}${d}${q})`:m; });
+}
+function rewriteHtml(html, map, css){
+  css=css||{};
   // src="..." 와 url(...) 의 로컬 경로를 dataURL로 (http/data는 유지)
   const lookup=(u)=>{ u=u.trim().replace(/^["']|["']$/g,''); if(/^(data:|https?:|#)/i.test(u)) return null; return map[baseName(u)]||map[u]||null; };
+  // 외부 stylesheet <link>를 인라인 <style>로 교체 (폰트 메트릭이 추출 시 적용되도록)
+  html=html.replace(/<link\b[^>]*>/gi,(tag)=>{
+    if(!/rel\s*=\s*["']?stylesheet/i.test(tag)) return tag;
+    const hm=tag.match(/href\s*=\s*["']([^"']+)["']/i); if(!hm) return tag;
+    const href=hm[1].trim(); if(/^(data:|https?:|#)/i.test(href)) return tag;
+    const cssText=css[baseName(href)]||css[href]; if(cssText==null) return tag;
+    return `<style data-from="${baseName(href).replace(/"/g,'&quot;')}">\n${rewriteCssUrls(cssText, map)}\n</style>`;
+  });
+  // 인라인 <style> 블록 내부 url(...)도 치환
+  html=html.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi,(m,attr,body)=>`<style${attr}>${rewriteCssUrls(body, map)}</style>`);
   html=html.replace(/(\s(?:src|href))\s*=\s*(["'])([^"']+)\2/gi,(m,attr,q,u)=>{ if(attr.trim()==='href' && !/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(u)) return m; const d=lookup(u); return d?`${attr}=${q}${d}${q}`:m; });
   html=html.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi,(m,q,u)=>{ const d=lookup(u); return d?`url(${q}${d}${q})`:m; });
   return html;
@@ -188,12 +205,13 @@ async function convert(){
   if(!state.files.length){ setLog('HTML 파일이 포함된 폴더(또는 파일들)를 선택하세요.'); return; }
   $('#go').disabled=true; $('#result').hidden=true; $('#progress').hidden=false;
   try{
-    const htmlFile=state.files.find(f=>/\.html?$/i.test(f.name));
-    if(!htmlFile){ throw new Error('HTML 파일을 못 찾았습니다.'); }
+    const htmlFiles=state.files.filter(f=>/\.html?$/i.test(f.name));
+    if(!htmlFiles.length){ throw new Error('HTML 파일을 못 찾았습니다.'); }
+    const htmlFile = htmlFiles.find(f=>(f.webkitRelativePath||f.name)===state.htmlChoice) || htmlFiles[0];
     setLog('에셋 읽는 중…');
-    const {map}=await buildAssets(state.files);
+    const {map, css}=await buildAssets(state.files);
     let html=await readAsText(htmlFile);
-    html=rewriteHtml(html, map);
+    html=rewriteHtml(html, map, css);
 
     // iframe 준비 (1920 폭 / 세로는 충분히 크게)
     const portrait = state.orient==='portrait';
@@ -267,8 +285,32 @@ async function convert(){
 }
 
 /* ---------- UI ---------- */
-function setFiles(list){ state.files=[...list]; const names=state.files.filter(f=>/\.html?$/i.test(f.name)).map(f=>f.name);
+function pickDefaultHtml(htmls){
+  // index 포함 파일 우선, 없으면 lastModified 최신
+  const byIndex=htmls.find(f=>/index/i.test(f.name));
+  if(byIndex) return byIndex;
+  return htmls.slice().sort((a,b)=>(b.lastModified||0)-(a.lastModified||0))[0];
+}
+function relOf(f){ return f.webkitRelativePath||f.name; }
+function renderHtmlPicker(htmls){
+  const box=$('#htmlpick');
+  if(htmls.length<=1){ box.hidden=true; box.innerHTML=''; return; }
+  const def=pickDefaultHtml(htmls);
+  state.htmlChoice=relOf(def);
+  let html=`<div class="hp-title">HTML이 ${htmls.length}개 있습니다. 변환할 파일을 고르세요.</div>`;
+  htmls.forEach((f,i)=>{
+    const rel=relOf(f);
+    const checked = rel===state.htmlChoice ? 'checked' : '';
+    html+=`<label><input type="radio" name="htmlchoice" value="${rel.replace(/"/g,'&quot;')}" ${checked}><span>${rel.replace(/</g,'&lt;')}</span></label>`;
+  });
+  box.innerHTML=html;
+  box.hidden=false;
+  box.querySelectorAll('input[name=htmlchoice]').forEach(r=>r.addEventListener('change',e=>{ state.htmlChoice=e.target.value; }));
+}
+function setFiles(list){ state.files=[...list]; const htmls=state.files.filter(f=>/\.html?$/i.test(f.name)); const names=htmls.map(f=>f.name);
   $('#picked').textContent = state.files.length? `${state.files.length}개 파일 · HTML: ${names.join(', ')||'없음'}` : '';
+  state.htmlChoice = htmls.length ? relOf(pickDefaultHtml(htmls)) : '';
+  renderHtmlPicker(htmls);
   $('#go').disabled=!names.length;
 }
 window.addEventListener('DOMContentLoaded',()=>{
